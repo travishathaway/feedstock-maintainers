@@ -1,9 +1,10 @@
 # feedstock-maintainers
 
-**Experimental project** for gathering insights into who maintains [conda-forge](https://conda-forge.org/)
-feedstocks: how many people maintain each package, who co-maintains with whom, and what that
-collaboration network looks like as a whole. This is exploratory tooling, not a production
-service — expect rough edges and breaking changes.
+> [!WARNING]
+> **Experimental project** for gathering insights into who maintains [conda-forge](https://conda-forge.org/)
+> feedstocks: how many people maintain each package, who co-maintains with whom, and what that
+> collaboration network looks like as a whole. This is exploratory tooling, not a production
+> service — expect rough edges and breaking changes.
 
 The project has two parts:
 

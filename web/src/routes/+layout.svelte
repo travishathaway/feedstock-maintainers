@@ -30,7 +30,7 @@
 		</a>
 		<a
 			class="btn btn-outline-light btn-sm ms-auto flex-shrink-0"
-			href="https://github.com/conda-forge/feedstock-maintainers"
+			href="https://github.com/travishathaway/feedstock-maintainers"
 			target="_blank"
 			rel="noreferrer"
 		>
