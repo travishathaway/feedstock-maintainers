@@ -1,0 +1,9 @@
+:root {
+	--bs-body-font-family: 'Inter Variable', Inter, system-ui, -apple-system, sans-serif;
+	--bs-font-monospace: 'JetBrains Mono Variable', 'JetBrains Mono', 'SFMono-Regular', Menlo, monospace;
+}
+
+h1, h2, h3, h4, h5, h6,
+.h1, .h2, .h3, .h4, .h5, .h6 {
+	font-family: 'JetBrains Mono Variable', 'JetBrains Mono', monospace;
+}
