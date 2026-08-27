@@ -13,6 +13,7 @@ dependencies = [
 
 [project.scripts]
 feedstock-maintainers = "feedstock_maintainers.cli:main"
+fsm = "feedstock_maintainers.cli:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -41,7 +42,10 @@ default = { solve-group = "default" }
 test = { features = ["test"], solve-group = "default" }
 
 [tool.pixi.tasks]
-scan = "feedstock-maintainers"
+fetch-feedstocks = "feedstock-maintainers fetch feedstocks"
+fetch-maintainer-info = "feedstock-maintainers fetch maintainer-info"
+generate-maintainers = "feedstock-maintainers generate maintainers"
+generate-graph-data = "feedstock-maintainers generate graph-data --output web/static/data/maintainer-graph.json"
 
 [tool.pixi.feature.test.tasks]
 test = "pytest"

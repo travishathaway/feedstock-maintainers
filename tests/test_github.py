@@ -18,6 +18,7 @@ from feedstock_maintainers.github import (
     RatePacer,
     _get_with_retries,
     fetch_recipe,
+    fetch_user_info,
 )
 from feedstock_maintainers.gitmodules import FeedstockSource
 
@@ -249,4 +250,49 @@ def test_fetch_recipe_via_contents_api_decodes_base64_and_sends_auth_header():
     result = asyncio.run(run())
     assert result is not None
     assert "bob" in result.text
+    assert seen_headers["authorization"] == "Bearer secret-token"
+
+
+# --- fetch_user_info: Users API -----------------------------------------------------------
+
+
+def test_fetch_user_info_returns_profile_json():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/users/alice"
+        return httpx.Response(200, json={"login": "alice", "id": 1})
+
+    async def run():
+        cooldown, pacer = Cooldown(), RatePacer(rate=0)
+        async with _client(handler) as client:
+            return await fetch_user_info(client, "alice", cooldown, pacer, retries=0)
+
+    result = asyncio.run(run())
+    assert result == {"login": "alice", "id": 1}
+
+
+def test_fetch_user_info_404_returns_none():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404)
+
+    async def run():
+        cooldown, pacer = Cooldown(), RatePacer(rate=0)
+        async with _client(handler) as client:
+            return await fetch_user_info(client, "ghost", cooldown, pacer, retries=0)
+
+    assert asyncio.run(run()) is None
+
+
+def test_fetch_user_info_sends_auth_header_only_when_token_given():
+    seen_headers = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen_headers["authorization"] = request.headers.get("authorization")
+        return httpx.Response(200, json={"login": "alice"})
+
+    async def run():
+        cooldown, pacer = Cooldown(), RatePacer(rate=0)
+        async with _client(handler) as client:
+            await fetch_user_info(client, "alice", cooldown, pacer, retries=0, token="secret-token")
+
+    asyncio.run(run())
     assert seen_headers["authorization"] == "Bearer secret-token"

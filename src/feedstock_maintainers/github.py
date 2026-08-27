@@ -32,6 +32,7 @@ from .gitmodules import FeedstockSource
 _RECIPE_PATHS = ("recipe/recipe.yaml", "recipe/meta.yaml", "recipe/meta.yml")
 _RAW_URL = "https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{path}"
 _CONTENTS_URL = "https://api.github.com/repos/{owner}/{repo}/contents/{path}"
+_USER_URL = "https://api.github.com/users/{username}"
 _API_VERSION = "2022-11-28"
 
 
@@ -226,3 +227,27 @@ async def fetch_recipe(
     if last_error is not None:
         raise last_error
     return None
+
+
+async def fetch_user_info(
+    client: httpx.AsyncClient,
+    username: str,
+    cooldown: Cooldown,
+    pacer: RatePacer,
+    retries: int = 3,
+    token: Optional[str] = None,
+) -> Optional[dict]:
+    """Return the GitHub user object for `username`, or None if the account is missing (404)."""
+    url = _USER_URL.format(username=username)
+    headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": _API_VERSION}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    response = await _get_with_retries(client, url, retries, cooldown, pacer, headers=headers)
+    if response is None:
+        return None
+
+    try:
+        return response.json()
+    except ValueError as exc:
+        raise FetchError(f"non-JSON response from Users API for {url}") from exc

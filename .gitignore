@@ -42,6 +42,7 @@ site/
 
 # Node.js
 node_modules/
+.pnpm-store/
 
 # PyCharm
 .idea/
@@ -74,5 +75,11 @@ dist/
 .mcp.json
 
 maintainers.json
+recipe_cache/
 
 env.sh
+
+# SvelteKit
+.svelte-kit/
+web/build/
+web/static/data/*.json
