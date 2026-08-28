@@ -12,7 +12,7 @@
 
 	onMount(async () => {
 		// Bootstrap's JS attaches document-level data-API listeners at import time --
-		// must stay client-only, same reason `sigma` is dynamically imported in
+		// must stay client-only, same reason `vis-network` is dynamically imported in
 		// MaintainerGraph.svelte.
 		await import('bootstrap/dist/js/bootstrap.bundle.min.js');
 	});

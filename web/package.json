@@ -28,7 +28,8 @@
 		"graphology": "^0.26.0",
 		"graphology-layout": "^0.6.1",
 		"graphology-layout-forceatlas2": "^0.10.1",
-		"sigma": "^3.0.2",
-		"tom-select": "^2.6.2"
+		"tom-select": "^2.6.2",
+		"vis-data": "^7.1.9",
+		"vis-network": "^9.1.9"
 	}
 }
