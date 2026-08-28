@@ -6,7 +6,12 @@ from feedstock_maintainers.graph_data import build_graph
 
 
 def _info(login: str) -> dict:
-    return {"login": login, "name": None, "html_url": f"https://github.com/{login}", "avatar_url": None}
+    return {
+        "login": login,
+        "name": None,
+        "html_url": f"https://github.com/{login}",
+        "avatar_url": None,
+    }
 
 
 def test_two_users_sharing_two_feedstocks_get_weight_two_edge():
@@ -132,3 +137,48 @@ def test_node_label_falls_back_to_login_when_name_missing():
     maintainer_info["alice"]["name"] = None
     graph = build_graph(maintainers, maintainer_info)
     assert graph["nodes"][0]["attributes"]["label"] == "alice"
+
+
+def test_isolated_node_gets_zero_valued_metrics():
+    maintainers = {"solo-feedstock": ["alice"]}
+    maintainer_info = {"alice": _info("alice")}
+
+    graph = build_graph(maintainers, maintainer_info)
+    attrs = graph["nodes"][0]["attributes"]
+
+    assert attrs["degreeCentrality"] == 0.0
+    assert attrs["weightedDegree"] == 0
+    assert attrs["betweennessCentrality"] == 0.0
+    assert attrs["pagerank"] == 1.0
+
+
+def test_bridge_node_has_higher_betweenness_than_endpoints():
+    # A path graph alice-bob-carol: bob sits on every shortest path between alice and carol.
+    maintainers = {
+        "widget-feedstock": ["alice", "bob"],
+        "gadget-feedstock": ["bob", "carol"],
+    }
+    maintainer_info = {name: _info(name) for name in ("alice", "bob", "carol")}
+
+    graph = build_graph(maintainers, maintainer_info)
+    metrics = {n["key"]: n["attributes"] for n in graph["nodes"]}
+
+    assert metrics["bob"]["betweennessCentrality"] > metrics["alice"]["betweennessCentrality"]
+    assert metrics["bob"]["betweennessCentrality"] > metrics["carol"]["betweennessCentrality"]
+    assert metrics["bob"]["weightedDegree"] == 2
+    assert metrics["alice"]["weightedDegree"] == 1
+
+
+def test_all_nodes_have_metric_keys_present():
+    maintainers = {
+        "widget-feedstock": ["alice", "bob"],
+        "gadget-feedstock": ["alice", "bob"],
+        "gizmo-feedstock": ["alice", "carol"],
+    }
+    maintainer_info = {name: _info(name) for name in ("alice", "bob", "carol")}
+
+    graph = build_graph(maintainers, maintainer_info)
+
+    expected_keys = {"degreeCentrality", "weightedDegree", "betweennessCentrality", "pagerank"}
+    for node in graph["nodes"]:
+        assert expected_keys.issubset(node["attributes"].keys())

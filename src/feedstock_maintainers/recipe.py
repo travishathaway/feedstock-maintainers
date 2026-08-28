@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 import jinja2
 import yaml
 
@@ -29,13 +27,6 @@ class _SilentUndefined(jinja2.Undefined):
     def _fail_with_undefined_error(self, *args, **kwargs):
         return _SilentUndefined()
 
-    __add__ = __radd__ = __sub__ = __rsub__ = __mul__ = __rmul__ = \
-        __truediv__ = __rtruediv__ = __floordiv__ = __rfloordiv__ = \
-        __mod__ = __rmod__ = __pos__ = __neg__ = __call__ = \
-        __getitem__ = __lt__ = __le__ = __gt__ = __ge__ = \
-        __int__ = __float__ = __complex__ = __pow__ = __rpow__ = \
-        lambda self, *args, **kwargs: _SilentUndefined()
-
     def __getattr__(self, name):
         return _SilentUndefined()
 
@@ -52,14 +43,45 @@ class _SilentUndefined(jinja2.Undefined):
         return ""
 
 
-_JINJA_ENV = jinja2.Environment(undefined=_SilentUndefined)
+_UNDEFINED_DUNDERS = (
+    "__add__",
+    "__radd__",
+    "__sub__",
+    "__rsub__",
+    "__mul__",
+    "__rmul__",
+    "__truediv__",
+    "__rtruediv__",
+    "__floordiv__",
+    "__rfloordiv__",
+    "__mod__",
+    "__rmod__",
+    "__pos__",
+    "__neg__",
+    "__call__",
+    "__getitem__",
+    "__lt__",
+    "__le__",
+    "__gt__",
+    "__ge__",
+    "__int__",
+    "__float__",
+    "__complex__",
+    "__pow__",
+    "__rpow__",
+)
+for _dunder in _UNDEFINED_DUNDERS:
+    setattr(_SilentUndefined, _dunder, lambda self, *args, **kwargs: _SilentUndefined())
+del _UNDEFINED_DUNDERS, _dunder
+
+_JINJA_ENV = jinja2.Environment(undefined=_SilentUndefined)  # noqa: S701 (renders YAML, not HTML)
 
 
 def _render_meta_yaml(text: str) -> str:
     return _JINJA_ENV.from_string(text).render()
 
 
-def _extract_from_data(data) -> Optional[list]:
+def _extract_from_data(data) -> list | None:
     if not isinstance(data, dict):
         return None
     extra = data.get("extra")

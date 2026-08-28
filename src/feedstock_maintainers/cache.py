@@ -10,10 +10,11 @@ resume without re-hitting GitHub for feedstocks it already has, and lets
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterator, Literal, Optional
+from typing import Literal
 
 _MANIFEST_FILENAME = "manifest.json"
 
@@ -24,9 +25,9 @@ Status = Literal["found", "not_found", "error"]
 class CacheEntry:
     name: str
     status: Status
-    filename: Optional[str] = None
-    message: Optional[str] = None
-    fetched_at: Optional[str] = None
+    filename: str | None = None
+    message: str | None = None
+    fetched_at: str | None = None
 
 
 class RecipeCache:
@@ -54,7 +55,7 @@ class RecipeCache:
     def _entry_dir(self, name: str) -> Path:
         return self.cache_dir / name
 
-    def status_for(self, name: str) -> Optional[Status]:
+    def status_for(self, name: str) -> Status | None:
         entry = self._entries.get(name)
         return entry.status if entry else None
 
@@ -77,7 +78,9 @@ class RecipeCache:
         self._entries[name] = CacheEntry(name=name, status="not_found", fetched_at=_now())
 
     def record_error(self, name: str, message: str) -> None:
-        self._entries[name] = CacheEntry(name=name, status="error", message=message, fetched_at=_now())
+        self._entries[name] = CacheEntry(
+            name=name, status="error", message=message, fetched_at=_now()
+        )
 
     def flush(self) -> None:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -96,6 +99,7 @@ class RecipeCache:
                 yield entry
 
     def read_text(self, entry: CacheEntry) -> str:
+        assert entry.filename is not None, f"cache entry {entry.name!r} has no filename"
         return (self._entry_dir(entry.name) / entry.filename).read_text(encoding="utf-8")
 
     def __len__(self) -> int:

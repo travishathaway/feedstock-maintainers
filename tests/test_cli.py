@@ -39,7 +39,14 @@ def test_startup_banner_reports_anonymous_mode_without_token(tmp_path):
     runner = CliRunner()
     result = runner.invoke(
         main,
-        ["fetch", "feedstocks", "--feedstocks-repo", str(tmp_path), "--cache-dir", str(tmp_path / "cache")],
+        [
+            "fetch",
+            "feedstocks",
+            "--feedstocks-repo",
+            str(tmp_path),
+            "--cache-dir",
+            str(tmp_path / "cache"),
+        ],
         env={"GITHUB_TOKEN": ""},
     )
 
@@ -97,7 +104,9 @@ def test_fetch_maintainer_info_writes_profiles_and_skips_team_handles(tmp_path, 
     _patch_fetch_user_info(monkeypatch, lambda username: {"login": username})
 
     runner = CliRunner()
-    result = runner.invoke(main, ["fetch", "maintainer-info", str(maintainers_file), "--output", str(output)])
+    result = runner.invoke(
+        main, ["fetch", "maintainer-info", str(maintainers_file), "--output", str(output)]
+    )
 
     assert result.exit_code == 0, result.output
     assert json.loads(output.read_text()) == {"alice": {"login": "alice"}, "bob": {"login": "bob"}}
@@ -119,7 +128,9 @@ def test_fetch_maintainer_info_resume_skips_existing_usernames(tmp_path, monkeyp
     _patch_fetch_user_info(monkeypatch, handler)
 
     runner = CliRunner()
-    result = runner.invoke(main, ["fetch", "maintainer-info", str(maintainers_file), "--output", str(output)])
+    result = runner.invoke(
+        main, ["fetch", "maintainer-info", str(maintainers_file), "--output", str(output)]
+    )
 
     assert result.exit_code == 0, result.output
     assert seen == ["bob"]
@@ -142,7 +153,8 @@ def test_fetch_maintainer_info_force_refetches_existing_usernames(tmp_path, monk
 
     runner = CliRunner()
     result = runner.invoke(
-        main, ["fetch", "maintainer-info", str(maintainers_file), "--output", str(output), "--force"]
+        main,
+        ["fetch", "maintainer-info", str(maintainers_file), "--output", str(output), "--force"],
     )
 
     assert result.exit_code == 0, result.output
@@ -156,7 +168,9 @@ def test_fetch_maintainer_info_404_is_reported_without_failing(tmp_path, monkeyp
     output = tmp_path / "maintainer-info.json"
     not_found_output = tmp_path / "maintainers-not-found.json"
 
-    _patch_fetch_user_info(monkeypatch, lambda username: None if username == "ghost" else {"login": username})
+    _patch_fetch_user_info(
+        monkeypatch, lambda username: None if username == "ghost" else {"login": username}
+    )
 
     runner = CliRunner()
     result = runner.invoke(
@@ -180,7 +194,9 @@ def test_fetch_maintainer_info_404_is_reported_without_failing(tmp_path, monkeyp
     assert "1" in result.output and "could not be resolved" in result.output
 
 
-def test_fetch_maintainer_info_not_found_file_drops_usernames_that_are_later_found(tmp_path, monkeypatch):
+def test_fetch_maintainer_info_not_found_file_drops_usernames_that_are_later_found(
+    tmp_path, monkeypatch
+):
     maintainers_file = tmp_path / "maintainers.json"
     maintainers_file.write_text(json.dumps({"widget-feedstock": ["ghost"]}))
     output = tmp_path / "maintainer-info.json"

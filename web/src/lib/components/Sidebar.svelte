@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import type TomSelect from 'tom-select';
-	import { usernames, selectedUsername, resetViewRequested } from '$lib/stores/graph';
+	import { usernames, selectedUsername, resetViewRequested, degreesOfSeparation } from '$lib/stores/graph';
 
 	let mobileSelectEl: HTMLSelectElement;
 	let desktopSelectEl: HTMLSelectElement;
@@ -58,7 +58,40 @@
 		<label for="{idPrefix}-username-filter" class="form-label small fw-semibold">Username</label>
 		<select id="{idPrefix}-username-filter" use:select></select>
 	</div>
-	<!-- Next filter goes here as another `<div class="mb-3">…</div>` block -->
+	{#if $selectedUsername}
+		<div class="mb-3">
+			<label for="{idPrefix}-degrees" class="form-label small fw-semibold">
+				Degrees of separation: {$degreesOfSeparation}
+			</label>
+			<div class="d-flex gap-2 align-items-center">
+				<button
+					type="button"
+					class="btn btn-outline-secondary btn-sm"
+					aria-label="Decrease degrees of separation"
+					onclick={() => degreesOfSeparation.update((n) => Math.max(1, n - 1))}
+				>
+					−
+				</button>
+				<input
+					type="range"
+					min="1"
+					max="5"
+					step="1"
+					class="form-range"
+					id="{idPrefix}-degrees"
+					bind:value={$degreesOfSeparation}
+				/>
+				<button
+					type="button"
+					class="btn btn-outline-secondary btn-sm"
+					aria-label="Increase degrees of separation"
+					onclick={() => degreesOfSeparation.update((n) => Math.min(5, n + 1))}
+				>
+					+
+				</button>
+			</div>
+		</div>
+	{/if}
 	<button type="button" class="btn btn-outline-secondary btn-sm w-100" onclick={resetView}>
 		<i class="bi bi-arrow-counterclockwise"></i> Reset view
 	</button>

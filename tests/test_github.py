@@ -117,7 +117,9 @@ def test_retry_after_header_then_success():
     async def run():
         cooldown, pacer = Cooldown(), RatePacer(rate=0)
         async with _client(handler) as client:
-            response = await _get_with_retries(client, "https://example/test", retries=2, cooldown=cooldown, pacer=pacer)
+            response = await _get_with_retries(
+                client, "https://example/test", retries=2, cooldown=cooldown, pacer=pacer
+            )
         return response
 
     response = asyncio.run(run())
@@ -143,7 +145,9 @@ def test_rate_limit_remaining_zero_waits_for_reset():
         cooldown, pacer = Cooldown(), RatePacer(rate=0)
         start = time.monotonic()
         async with _client(handler) as client:
-            response = await _get_with_retries(client, "https://example/test", retries=2, cooldown=cooldown, pacer=pacer)
+            response = await _get_with_retries(
+                client, "https://example/test", retries=2, cooldown=cooldown, pacer=pacer
+            )
         return response, time.monotonic() - start
 
     response, elapsed = asyncio.run(run())
@@ -165,7 +169,9 @@ def test_transient_5xx_falls_back_to_backoff_then_succeeds():
     async def run():
         cooldown, pacer = Cooldown(), RatePacer(rate=0)
         async with _client(handler) as client:
-            return await _get_with_retries(client, "https://example/test", retries=3, cooldown=cooldown, pacer=pacer)
+            return await _get_with_retries(
+                client, "https://example/test", retries=3, cooldown=cooldown, pacer=pacer
+            )
 
     response = asyncio.run(run())
     assert response is not None
@@ -180,7 +186,9 @@ def test_404_returns_none_without_raising():
     async def run():
         cooldown, pacer = Cooldown(), RatePacer(rate=0)
         async with _client(handler) as client:
-            return await _get_with_retries(client, "https://example/test", retries=1, cooldown=cooldown, pacer=pacer)
+            return await _get_with_retries(
+                client, "https://example/test", retries=1, cooldown=cooldown, pacer=pacer
+            )
 
     assert asyncio.run(run()) is None
 
@@ -192,7 +200,9 @@ def test_exhausted_retries_raises_fetch_error():
     async def run():
         cooldown, pacer = Cooldown(), RatePacer(rate=0)
         async with _client(handler) as client:
-            await _get_with_retries(client, "https://example/test", retries=1, cooldown=cooldown, pacer=pacer)
+            await _get_with_retries(
+                client, "https://example/test", retries=1, cooldown=cooldown, pacer=pacer
+            )
 
     with pytest.raises(FetchError):
         asyncio.run(run())
@@ -245,7 +255,9 @@ def test_fetch_recipe_via_contents_api_decodes_base64_and_sends_auth_header():
     async def run():
         cooldown, pacer = Cooldown(), RatePacer(rate=0)
         async with _client(handler) as client:
-            return await fetch_recipe(client, _source(), cooldown, pacer, retries=0, token="secret-token")
+            return await fetch_recipe(
+                client, _source(), cooldown, pacer, retries=0, token="secret-token"
+            )
 
     result = asyncio.run(run())
     assert result is not None

@@ -9,7 +9,15 @@ from pathlib import Path
 import click
 import httpx
 from rich.console import Console
-from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn, TimeRemainingColumn
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    TimeElapsedColumn,
+    TimeRemainingColumn,
+)
 
 from .cache import RecipeCache
 from .github import Cooldown, FetchError, RatePacer, fetch_recipe, fetch_user_info
@@ -104,14 +112,18 @@ async def _fetch_user_one(
     errors: list[tuple[str, str]],
 ) -> None:
     try:
-        info = await fetch_user_info(client, username, cooldown, pacer, retries=retries, token=token)
+        info = await fetch_user_info(
+            client, username, cooldown, pacer, retries=retries, token=token
+        )
     except FetchError as exc:
         errors.append((username, str(exc)))
         not_found[username] = f"fetch failed after retries: {exc}"
         return
 
     if info is None:
-        not_found[username] = "GitHub user not found (HTTP 404) -- account may have been deleted or renamed"
+        not_found[username] = (
+            "GitHub user not found (HTTP 404) -- account may have been deleted or renamed"
+        )
     else:
         results[username] = info
         not_found.pop(username, None)
@@ -143,7 +155,9 @@ async def _run_fetch_maintainer_info(
 
         async def bound(username: str) -> None:
             async with semaphore:
-                await _fetch_user_one(username, client, retries, cooldown, pacer, token, results, not_found, errors)
+                await _fetch_user_one(
+                    username, client, retries, cooldown, pacer, token, results, not_found, errors
+                )
 
         with Progress(
             TextColumn("[progress.description]{task.description}"),
@@ -274,7 +288,9 @@ def fetch_feedstocks(
         )
 
     if requests_per_second is None:
-        requests_per_second = _DEFAULT_RATE_LIMIT_WITH_TOKEN if token else _DEFAULT_RATE_LIMIT_NO_TOKEN
+        requests_per_second = (
+            _DEFAULT_RATE_LIMIT_WITH_TOKEN if token else _DEFAULT_RATE_LIMIT_NO_TOKEN
+        )
 
     mode = "authenticated Contents API" if token else "anonymous raw.githubusercontent.com"
     console.print(f"Fetching via {mode}, paced at {requests_per_second:g} req/s")
@@ -283,9 +299,13 @@ def fetch_feedstocks(
     console.print(f"Discovered {len(all_sources)} feedstocks in {gitmodules}")
 
     cache = RecipeCache(cache_dir)
-    todo = [source for name, source in sorted(all_sources.items()) if cache.should_fetch(name, force)]
+    todo = [
+        source for name, source in sorted(all_sources.items()) if cache.should_fetch(name, force)
+    ]
 
-    console.print(f"{len(todo)} to fetch ({len(all_sources) - len(todo)} already cached in {cache_dir})")
+    console.print(
+        f"{len(todo)} to fetch ({len(all_sources) - len(todo)} already cached in {cache_dir})"
+    )
 
     if not todo:
         console.print("[green]Nothing to do.[/]")
@@ -420,7 +440,9 @@ def fetch_maintainer_info(
     not_found: dict[str, str] = {}
     if not_found_output.exists() and not force:
         previously_not_found = json.loads(not_found_output.read_text(encoding="utf-8"))
-        not_found = {name: reason for name, reason in previously_not_found.items() if name in all_names}
+        not_found = {
+            name: reason for name, reason in previously_not_found.items() if name in all_names
+        }
 
     todo = [name for name in usernames if force or name not in existing]
 
@@ -431,7 +453,9 @@ def fetch_maintainer_info(
     console.print(f"{len(todo)} to fetch ({len(usernames) - len(todo)} already in {output})")
 
     if requests_per_second is None:
-        requests_per_second = _DEFAULT_RATE_LIMIT_WITH_TOKEN if token else _DEFAULT_RATE_LIMIT_NO_TOKEN
+        requests_per_second = (
+            _DEFAULT_RATE_LIMIT_WITH_TOKEN if token else _DEFAULT_RATE_LIMIT_NO_TOKEN
+        )
 
     if not todo:
         _atomic_write(not_found_output, not_found)
@@ -464,7 +488,10 @@ def fetch_maintainer_info(
 
     console.print(f"[green]Done.[/] {len(results)} maintainers recorded in {output}")
     if not_found:
-        console.print(f"[yellow]{len(not_found)}[/] usernames could not be resolved, recorded in {not_found_output}")
+        console.print(
+            f"[yellow]{len(not_found)}[/] usernames could not be resolved, "
+            f"recorded in {not_found_output}"
+        )
     if errors:
         console.print(f"[red]{len(errors)}[/] usernames failed to fetch:")
         for name, message in errors[:20]:
@@ -503,6 +530,7 @@ def generate_maintainers(cache_dir: Path, output: Path) -> None:
     errors: list[tuple[str, str]] = []
     for entry in cache.found_entries():
         text = cache.read_text(entry)
+        assert entry.filename is not None
         try:
             results[entry.name] = extract_maintainers_from_text(entry.filename, text)
         except ParseError as exc:
@@ -557,10 +585,26 @@ def generate_graph_data(maintainers_file: Path, maintainer_info_file: Path, outp
     maintainers_data = json.loads(maintainers_file.read_text(encoding="utf-8"))
     maintainer_info_data = json.loads(maintainer_info_file.read_text(encoding="utf-8"))
 
-    graph = build_graph(maintainers_data, maintainer_info_data)
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        TimeElapsedColumn(),
+        console=console,
+        transient=True,
+    ) as progress:
+        task = progress.add_task("Building maintainer collaboration graph...", total=None)
+        graph = build_graph(
+            maintainers_data,
+            maintainer_info_data,
+            on_step=lambda description: progress.update(task, description=description + "..."),
+        )
+
     _atomic_write(output, graph)
 
-    console.print(f"[green]Done.[/] {len(graph['nodes'])} nodes, {len(graph['edges'])} edges written to {output}")
+    console.print(
+        f"[green]Done.[/] {len(graph['nodes'])} nodes, {len(graph['edges'])} "
+        f"edges written to {output}"
+    )
 
 
 if __name__ == "__main__":

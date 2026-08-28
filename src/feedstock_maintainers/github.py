@@ -23,7 +23,6 @@ import base64
 import random
 import time
 from dataclasses import dataclass
-from typing import Optional
 
 import httpx
 
@@ -121,11 +120,11 @@ async def _get_with_retries(
     retries: int,
     cooldown: Cooldown,
     pacer: RatePacer,
-    params: Optional[dict] = None,
-    headers: Optional[dict] = None,
-) -> Optional[httpx.Response]:
+    params: dict | None = None,
+    headers: dict | None = None,
+) -> httpx.Response | None:
     """Return the response, None on 404, or raise FetchError after exhausting retries."""
-    last_exc: Optional[Exception] = None
+    last_exc: Exception | None = None
 
     for attempt in range(retries + 1):
         await cooldown.wait()
@@ -149,7 +148,7 @@ async def _get_with_retries(
 
         if attempt < retries:
             base = 0.5 * (2**attempt)
-            await asyncio.sleep(base + random.uniform(0, base * 0.5))
+            await asyncio.sleep(base + random.uniform(0, base * 0.5))  # noqa: S311
 
     raise FetchError(str(last_exc) if last_exc else f"failed to fetch {url}")
 
@@ -161,7 +160,7 @@ async def _fetch_via_raw(
     retries: int,
     cooldown: Cooldown,
     pacer: RatePacer,
-) -> Optional[str]:
+) -> str | None:
     url = _RAW_URL.format(owner=source.owner, repo=source.repo, branch=source.branch, path=path)
     response = await _get_with_retries(client, url, retries, cooldown, pacer)
     return response.text if response is not None else None
@@ -175,7 +174,7 @@ async def _fetch_via_contents_api(
     cooldown: Cooldown,
     pacer: RatePacer,
     token: str,
-) -> Optional[str]:
+) -> str | None:
     url = _CONTENTS_URL.format(owner=source.owner, repo=source.repo, path=path)
     headers = {
         "Authorization": f"Bearer {token}",
@@ -207,15 +206,17 @@ async def fetch_recipe(
     cooldown: Cooldown,
     pacer: RatePacer,
     retries: int = 3,
-    token: Optional[str] = None,
-) -> Optional[FetchedRecipe]:
+    token: str | None = None,
+) -> FetchedRecipe | None:
     """Return the first recipe file found for a feedstock, or None if all paths 404."""
-    last_error: Optional[FetchError] = None
+    last_error: FetchError | None = None
 
     for path in _RECIPE_PATHS:
         try:
             if token:
-                text = await _fetch_via_contents_api(client, source, path, retries, cooldown, pacer, token)
+                text = await _fetch_via_contents_api(
+                    client, source, path, retries, cooldown, pacer, token
+                )
             else:
                 text = await _fetch_via_raw(client, source, path, retries, cooldown, pacer)
         except FetchError as exc:
@@ -235,8 +236,8 @@ async def fetch_user_info(
     cooldown: Cooldown,
     pacer: RatePacer,
     retries: int = 3,
-    token: Optional[str] = None,
-) -> Optional[dict]:
+    token: str | None = None,
+) -> dict | None:
     """Return the GitHub user object for `username`, or None if the account is missing (404)."""
     url = _USER_URL.format(username=username)
     headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": _API_VERSION}
