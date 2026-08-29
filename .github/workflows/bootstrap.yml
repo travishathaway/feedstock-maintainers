@@ -1,0 +1,42 @@
+name: Bootstrap Feedstock Cache
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'URL of the of the feedstock cache'
+        required: true
+        type: string
+      artifact_name:
+        description: 'Name for the uploaded artifact'
+        required: false
+        type: string
+        default: 'feedstock-cache.tar.gz'
+
+jobs:
+  download-and-upload:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download file
+        id: download
+        run: |
+          mkdir -p downloaded
+          cd downloaded
+
+          # Extract filename from URL, fallback to generic name if it can't be determined
+          filename=$(basename "${{ inputs.url }}" | cut -d '?' -f1)
+          if [ -z "$filename" ]; then
+            filename="downloaded_file"
+          fi
+
+          # -f fails on HTTP errors, -L follows redirects, -sS silent but show errors
+          curl -fLsS -o "$filename" "${{ inputs.url }}"
+
+          echo "filename=$filename" >> "$GITHUB_OUTPUT"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: ${{ steps.download.outputs.filename }}
+          if-no-files-found: error
