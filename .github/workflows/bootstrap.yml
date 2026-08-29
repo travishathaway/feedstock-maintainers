@@ -38,5 +38,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ inputs.artifact_name }}
-          path: ${{ steps.download.outputs.filename }}
+          path: downloaded/${{ steps.download.outputs.filename }}
           if-no-files-found: error
