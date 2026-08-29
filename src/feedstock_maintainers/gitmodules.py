@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from pathlib import Path
 
 _URL_RE = re.compile(r"github\.com[/:]([^/]+)/([^/]+?)(?:\.git)?/?$")
 _KEY_RE = re.compile(r"^\s*(url|branch)\s*=\s*(\S+)\s*$", re.MULTILINE)
@@ -23,9 +22,8 @@ class FeedstockSource:
     branch: str
 
 
-def parse_gitmodules(path: Path) -> dict[str, FeedstockSource]:
+def parse_gitmodules(text: str) -> dict[str, FeedstockSource]:
     """Return {feedstock_name: FeedstockSource} for every submodule entry."""
-    text = path.read_text(encoding="utf-8", errors="replace")
     sources: dict[str, FeedstockSource] = {}
 
     for block in re.split(r"(?=^\[submodule )", text, flags=re.MULTILINE):

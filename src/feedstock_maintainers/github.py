@@ -33,6 +33,9 @@ _RAW_URL = "https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{path}"
 _CONTENTS_URL = "https://api.github.com/repos/{owner}/{repo}/contents/{path}"
 _USER_URL = "https://api.github.com/users/{username}"
 _API_VERSION = "2022-11-28"
+_FEEDSTOCK_GITMODULES = (
+    "https://raw.githubusercontent.com/conda-forge/feedstocks/refs/heads/main/.gitmodules"
+)
 
 
 @dataclass(frozen=True)
@@ -252,3 +255,15 @@ async def fetch_user_info(
         return response.json()
     except ValueError as exc:
         raise FetchError(f"non-JSON response from Users API for {url}") from exc
+
+
+def fetch_gitmodules() -> str:
+    """Return the .gitmodules file as a string."""
+    url = _FEEDSTOCK_GITMODULES
+    response = httpx.get(url, follow_redirects=True)
+    response.raise_for_status()
+
+    try:
+        return response.text
+    except ValueError as exc:
+        raise FetchError(f"Non-text response from raw file fetch for {url}") from exc

@@ -20,7 +20,7 @@ from rich.progress import (
 )
 
 from .cache import RecipeCache
-from .github import Cooldown, FetchError, RatePacer, fetch_recipe, fetch_user_info
+from .github import Cooldown, FetchError, RatePacer, fetch_gitmodules, fetch_recipe, fetch_user_info
 from .gitmodules import FeedstockSource, parse_gitmodules
 from .graph_data import build_graph
 from .recipe import ParseError, extract_maintainers_from_text
@@ -280,13 +280,6 @@ def fetch_feedstocks(
     """
     console = Console()
 
-    gitmodules = feedstocks_repo / ".gitmodules"
-    if not gitmodules.exists():
-        raise click.ClickException(
-            f"No .gitmodules found in {feedstocks_repo}. Pass --feedstocks-repo pointing at "
-            "a local checkout of conda-forge/feedstocks."
-        )
-
     if requests_per_second is None:
         requests_per_second = (
             _DEFAULT_RATE_LIMIT_WITH_TOKEN if token else _DEFAULT_RATE_LIMIT_NO_TOKEN
@@ -295,8 +288,9 @@ def fetch_feedstocks(
     mode = "authenticated Contents API" if token else "anonymous raw.githubusercontent.com"
     console.print(f"Fetching via {mode}, paced at {requests_per_second:g} req/s")
 
+    gitmodules = fetch_gitmodules()
     all_sources = parse_gitmodules(gitmodules)
-    console.print(f"Discovered {len(all_sources)} feedstocks in {gitmodules}")
+    console.print(f"Discovered {len(all_sources)} feedstocks in .gitmodules")
 
     cache = RecipeCache(cache_dir)
     todo = [

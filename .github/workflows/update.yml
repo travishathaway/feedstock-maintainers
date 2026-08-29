@@ -1,0 +1,86 @@
+name: update
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 * * * *'   # every hour, on the hour (UTC)
+
+env:
+  ARCHIVE_NAME: recipe_cache.tar.gz
+  ARTIFACT_NAME: recipe-cache
+  SEED_URL: https://emsde.thath.net/recipe_cache.tar.gz
+
+jobs:
+  find-source:
+    # Waits on check-permissions if it ran, but proceeds regardless if it was skipped (schedule).
+    runs-on: ubuntu-latest
+    outputs:
+      run_id: ${{ steps.find.outputs.run_id }}
+    steps:
+      - name: Find latest successful run of this workflow
+        id: find
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data } = await github.rest.actions.listWorkflowRuns({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'update.yml',
+              status: 'success',
+              per_page: 1,
+            });
+
+            if (data.workflow_runs.length > 0) {
+              core.setOutput('run_id', data.workflow_runs[0].id);
+            } else {
+              core.setOutput('run_id', '');  // signals: no prior artifact, fall back to seed URL
+            }
+
+  update:
+    needs: find-source
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download previous artifact
+        if: needs.find-source.outputs.run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: work
+          run-id: ${{ needs.find-source.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Seed from external URL (first run / no prior artifact)
+        if: needs.find-source.outputs.run_id == ''
+        run: |
+          mkdir -p work
+          curl -fLsS -o "work/${{ env.ARCHIVE_NAME }}" "${{ env.SEED_URL }}"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: prefix-dev/setup-pixi@v0.10.0
+        with:
+          pixi-version: v0.73.0
+          environments: default
+          cache: true
+
+      - name: Extract archive
+        run: |
+          tar -xzf "work/${{ env.ARCHIVE_NAME }}"
+
+      - name: Update recipes
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          pixi run fsm fetch feedstocks
+
+      - name: Recompile archive
+        run: |
+          tar -czf "${{ env.ARCHIVE_NAME }}" recipe_cache
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: work/${{ env.ARCHIVE_NAME }}
+          retention-days: 7
+          if-no-files-found: error
