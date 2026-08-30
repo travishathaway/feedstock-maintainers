@@ -46,22 +46,21 @@ jobs:
     needs: find-source
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
       - name: Download previous artifact
         if: needs.find-source.outputs.run_id != ''
         uses: actions/download-artifact@v4
         with:
           name: ${{ env.ARTIFACT_NAME }}
-          path: ${{ env.ARTIFACT_NAME }}
+          path: .
           run-id: ${{ needs.find-source.outputs.run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Seed from external URL (first run / no prior artifact)
         if: needs.find-source.outputs.run_id == ''
         run: |
-          mkdir -p work
-          curl -fLsS -o "work/${{ env.ARCHIVE_NAME }}" "${{ env.SEED_URL }}"
-
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+          curl -fLsS -o "${{ env.ARCHIVE_NAME }}" "${{ env.SEED_URL }}"
 
       - uses: prefix-dev/setup-pixi@v0.10.0
         with:
