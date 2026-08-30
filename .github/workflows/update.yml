@@ -3,7 +3,7 @@ name: update
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 * * * *'   # every hour, on the hour (UTC)
+    - cron: '0 0/3 * * *'   # every three hours, on the hour (UTC)
 
 env:
   ARCHIVE_NAME: recipe_cache.tar.gz
@@ -83,14 +83,23 @@ jobs:
             pixi run fsm fetch feedstocks
           fi
 
+          pixi run fsm generate maintainers
+          pixi run fsm fetch maintainer-info
+          pixi run fsm generate graph-data
+
       - name: Recompile archive
         run: |
-          tar -czf "${{ env.ARCHIVE_NAME }}" recipe_cache
+          tar -czf "${{ env.ARCHIVE_NAME }}" \
+            recipe_cache \
+            maintainers.json \
+            maintainers-not-found.json \
+            maintainer-info.json \
+            graph-data.json
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.ARTIFACT_NAME }}
           path: ${{ env.ARCHIVE_NAME }}
-          retention-days: 7
+          retention-days: 1
           if-no-files-found: error
