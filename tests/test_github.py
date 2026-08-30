@@ -18,6 +18,7 @@ from feedstock_maintainers.github import (
     RatePacer,
     _get_with_retries,
     fetch_recipe,
+    fetch_updated_feedstocks,
     fetch_user_info,
 )
 from feedstock_maintainers.gitmodules import FeedstockSource
@@ -308,3 +309,112 @@ def test_fetch_user_info_sends_auth_header_only_when_token_given():
 
     asyncio.run(run())
     assert seen_headers["authorization"] == "Bearer secret-token"
+
+
+# --- fetch_updated_feedstocks: GraphQL commit-history pagination --------------------------
+
+
+def _commit(message: str) -> dict:
+    return {"oid": "abc", "message": message, "committedDate": "2026-08-01T00:00:00Z"}
+
+
+def _page(nodes: list[dict], has_next_page: bool, end_cursor: str | None = None) -> dict:
+    return {
+        "data": {
+            "repository": {
+                "ref": {
+                    "target": {
+                        "history": {
+                            "nodes": nodes,
+                            "pageInfo": {"hasNextPage": has_next_page, "endCursor": end_cursor},
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
+def test_fetch_updated_feedstocks_parses_commit_messages(monkeypatch):
+    page = _page(
+        [
+            _commit("Updated the widget-feedstock feedstock."),
+            _commit("Merge pull request #123 from conda-forge/regro-cf-autotick-bot"),
+            _commit("Updated the gadget-feedstock feedstock."),
+        ],
+        has_next_page=False,
+    )
+
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: httpx.Response(200, json=page))
+
+    result = fetch_updated_feedstocks("2026-08-01T00:00:00Z")
+
+    assert result == {"widget-feedstock", "gadget-feedstock"}
+
+
+def test_fetch_updated_feedstocks_paginates(monkeypatch):
+    page_one = _page([_commit("Updated the widget-feedstock feedstock.")], True, "cursor-1")
+    page_two = _page([_commit("Updated the gadget-feedstock feedstock.")], False)
+
+    seen_cursors = []
+
+    def fake_post(url, json=None, headers=None):
+        variables = json["variables"]
+        seen_cursors.append(variables["cursor"])
+        return httpx.Response(200, json=page_one if variables["cursor"] is None else page_two)
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    result = fetch_updated_feedstocks("2026-08-01T00:00:00Z")
+
+    assert result == {"widget-feedstock", "gadget-feedstock"}
+    assert seen_cursors == [None, "cursor-1"]
+
+
+def test_fetch_updated_feedstocks_sends_auth_header_only_when_token_given(monkeypatch):
+    page = _page([], has_next_page=False)
+    seen_headers = {}
+
+    def fake_post(url, json=None, headers=None):
+        seen_headers["authorization"] = headers.get("Authorization")
+        return httpx.Response(200, json=page)
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    fetch_updated_feedstocks("2026-08-01T00:00:00Z", token="secret-token")
+
+    assert seen_headers["authorization"] == "Bearer secret-token"
+
+
+def test_fetch_updated_feedstocks_reports_progress_for_every_page_including_last(monkeypatch):
+    page_one = _page([_commit("Updated the widget-feedstock feedstock.")], True, "cursor-1")
+    page_two = _page([_commit("Updated the gadget-feedstock feedstock.")], False)
+
+    def fake_post(url, json=None, headers=None):
+        variables = json["variables"]
+        return httpx.Response(200, json=page_one if variables["cursor"] is None else page_two)
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    steps: list[str] = []
+    fetch_updated_feedstocks("2026-08-01T00:00:00Z", on_step=steps.append)
+
+    assert len(steps) == 2
+
+
+def test_fetch_updated_feedstocks_retries_transient_errors_then_succeeds(monkeypatch):
+    page = _page([_commit("Updated the widget-feedstock feedstock.")], has_next_page=False)
+    calls = []
+
+    def fake_post(url, json=None, headers=None):
+        calls.append(1)
+        if len(calls) == 1:
+            return httpx.Response(503)
+        return httpx.Response(200, json=page)
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr(time, "sleep", lambda _seconds: None)
+
+    result = fetch_updated_feedstocks("2026-08-01T00:00:00Z", retries=1)
+
+    assert result == {"widget-feedstock"}
+    assert len(calls) == 2

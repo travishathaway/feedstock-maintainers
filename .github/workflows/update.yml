@@ -12,10 +12,10 @@ env:
 
 jobs:
   find-source:
-    # Waits on check-permissions if it ran, but proceeds regardless if it was skipped (schedule).
     runs-on: ubuntu-latest
     outputs:
       run_id: ${{ steps.find.outputs.run_id }}
+      since: ${{ steps.find.outputs.since }}
     steps:
       - name: Find latest successful run of this workflow
         id: find
@@ -31,9 +31,15 @@ jobs:
             });
 
             if (data.workflow_runs.length > 0) {
-              core.setOutput('run_id', data.workflow_runs[0].id);
+              const run = data.workflow_runs[0];
+              core.setOutput('run_id', run.id);
+              // Buffered by 10 minutes to cover clock skew and the previous run's own
+              // execution time, so we never miss a commit made during that run.
+              const since = new Date(new Date(run.created_at).getTime() - 10 * 60 * 1000);
+              core.setOutput('since', since.toISOString());
             } else {
               core.setOutput('run_id', '');  // signals: no prior artifact, fall back to seed URL
+              core.setOutput('since', '');    // signals: no diff to compute, fetch everything
             }
 
   update:
@@ -45,7 +51,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: ${{ env.ARTIFACT_NAME }}
-          path: work
+          path: ${{ env.ARTIFACT_NAME }}
           run-id: ${{ needs.find-source.outputs.run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -65,13 +71,18 @@ jobs:
 
       - name: Extract archive
         run: |
-          tar -xzf "work/${{ env.ARCHIVE_NAME }}"
+          tar -xzf "${{ env.ARCHIVE_NAME }}"
 
       - name: Update recipes
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SINCE: ${{ needs.find-source.outputs.since }}
         run: |
-          pixi run fsm fetch feedstocks
+          if [ -n "$SINCE" ]; then
+            pixi run fsm fetch feedstocks --since "$SINCE"
+          else
+            pixi run fsm fetch feedstocks
+          fi
 
       - name: Recompile archive
         run: |
@@ -81,6 +92,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.ARTIFACT_NAME }}
-          path: work/${{ env.ARCHIVE_NAME }}
+          path: ${{ env.ARCHIVE_NAME }}
           retention-days: 7
           if-no-files-found: error

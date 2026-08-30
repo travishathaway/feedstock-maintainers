@@ -22,6 +22,7 @@ import asyncio
 import base64
 import random
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import httpx
@@ -32,10 +33,14 @@ _RECIPE_PATHS = ("recipe/recipe.yaml", "recipe/meta.yaml", "recipe/meta.yml")
 _RAW_URL = "https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{path}"
 _CONTENTS_URL = "https://api.github.com/repos/{owner}/{repo}/contents/{path}"
 _USER_URL = "https://api.github.com/users/{username}"
+_GRAPHQL_URL = "https://api.github.com/graphql"
 _API_VERSION = "2022-11-28"
 _FEEDSTOCK_GITMODULES = (
     "https://raw.githubusercontent.com/conda-forge/feedstocks/refs/heads/main/.gitmodules"
 )
+_OWNER = "conda-forge"
+_REPO = "feedstocks"
+_BRANCH = "main"
 
 
 @dataclass(frozen=True)
@@ -267,3 +272,121 @@ def fetch_gitmodules() -> str:
         return response.text
     except ValueError as exc:
         raise FetchError(f"Non-text response from raw file fetch for {url}") from exc
+
+
+def fetch_updated_feedstocks(
+    since: str,
+    token: str | None = None,
+    on_step: Callable[[str], None] | None = None,
+    retries: int = 3,
+) -> set[str]:
+    """
+    Inspect the commit logs filtering by "since" and return all the feedstocks mentioned as
+    being "Updated".
+
+    The commit messages look like this:
+    > Updated the <name> feedstock.
+
+    We parse "<name>" out of this.
+    """
+    step = on_step or (lambda _description: None)
+
+    def _run_query(query, _variables=None):
+        headers = {}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+
+        last_exc: Exception | None = None
+        for attempt in range(retries + 1):
+            try:
+                response = httpx.post(
+                    _GRAPHQL_URL,
+                    json={"query": query, "variables": _variables or {}},
+                    headers=headers,
+                )
+            except httpx.TransportError as exc:
+                last_exc = exc
+            else:
+                if response.status_code == 200:
+                    try:
+                        return response.json().get("data")
+                    except ValueError as exc:
+                        raise FetchError(
+                            f"non-JSON response from GraphQL API for {_GRAPHQL_URL}"
+                        ) from exc
+                if response.status_code in (403, 429) or response.status_code >= 500:
+                    last_exc = FetchError(f"HTTP {response.status_code} for {_GRAPHQL_URL}")
+                else:
+                    raise FetchError(f"HTTP {response.status_code} for {_GRAPHQL_URL}")
+
+            if attempt < retries:
+                base = 0.5 * (2**attempt)
+                time.sleep(base + random.uniform(0, base * 0.5))  # noqa: S311
+
+        raise FetchError(str(last_exc) if last_exc else f"failed to fetch {_GRAPHQL_URL}")
+
+    commits_query = """
+        query(
+            $owner: String!, $repo: String!, $branch: String!,
+            $since: GitTimestamp!, $cursor: String
+        ) {
+          repository(owner: $owner, name: $repo) {
+            ref(qualifiedName: $branch) {
+              target {
+                ... on Commit {
+                  history(since: $since, first: 50, after: $cursor) {
+                    nodes {
+                      oid
+                      message
+                      committedDate
+                      author {
+                        name
+                        email
+                      }
+                    }
+                    pageInfo {
+                      hasNextPage
+                      endCursor
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+    """
+
+    all_commits = []
+    cursor = None
+    counter = 1
+
+    while True:
+        variables = {
+            "owner": _OWNER,
+            "repo": _REPO,
+            "branch": _BRANCH,
+            "since": since,
+            "cursor": cursor,
+        }
+        data = _run_query(commits_query, variables)
+
+        if not data:
+            break
+
+        history = data["repository"]["ref"]["target"]["history"]
+        all_commits.extend(history["nodes"])
+        step(f"Fetched page {counter}")
+        counter += 1
+
+        if history["pageInfo"]["hasNextPage"]:
+            cursor = history["pageInfo"]["endCursor"]
+        else:
+            break
+
+    updated_feedstocks = set()
+
+    for commit in all_commits:
+        if commit.get("message", "").startswith("Updated the"):
+            updated_feedstocks.add(commit["message"].split()[2])
+
+    return updated_feedstocks

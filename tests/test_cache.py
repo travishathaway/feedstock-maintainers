@@ -59,6 +59,25 @@ def test_should_fetch_resume_semantics(tmp_path):
     assert cache.should_fetch("not-found-feedstock", force=True) is True
 
 
+def test_should_fetch_forces_refetch_for_names_in_recipes_to_update(tmp_path):
+    cache = RecipeCache(tmp_path / "cache", recipes_to_update={"found-feedstock"})
+    cache.record_found("found-feedstock", "recipe.yaml", "extra: {}\n")
+    cache.record_found("other-feedstock", "recipe.yaml", "extra: {}\n")
+
+    # In recipes_to_update -> refetched even though already found, without --force.
+    assert cache.should_fetch("found-feedstock", force=False) is True
+
+    # Already found but not in recipes_to_update -> normal resume semantics still apply.
+    assert cache.should_fetch("other-feedstock", force=False) is False
+
+
+def test_recipes_to_update_none_preserves_normal_resume_semantics(tmp_path):
+    cache = RecipeCache(tmp_path / "cache", recipes_to_update=None)
+    cache.record_found("found-feedstock", "recipe.yaml", "extra: {}\n")
+
+    assert cache.should_fetch("found-feedstock", force=False) is False
+
+
 def test_flush_is_atomic_and_leaves_no_tmp_file(tmp_path):
     cache_dir = tmp_path / "cache"
     cache = RecipeCache(cache_dir)

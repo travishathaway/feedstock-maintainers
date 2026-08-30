@@ -20,7 +20,15 @@ from rich.progress import (
 )
 
 from .cache import RecipeCache
-from .github import Cooldown, FetchError, RatePacer, fetch_gitmodules, fetch_recipe, fetch_user_info
+from .github import (
+    Cooldown,
+    FetchError,
+    RatePacer,
+    fetch_gitmodules,
+    fetch_recipe,
+    fetch_updated_feedstocks,
+    fetch_user_info,
+)
 from .gitmodules import FeedstockSource, parse_gitmodules
 from .graph_data import build_graph
 from .recipe import ParseError, extract_maintainers_from_text
@@ -193,13 +201,6 @@ def fetch() -> None:
 
 @fetch.command("feedstocks")
 @click.option(
-    "--feedstocks-repo",
-    type=click.Path(exists=True, file_okay=False, path_type=Path),
-    default=Path("."),
-    show_default=True,
-    help="Path to a local checkout of conda-forge/feedstocks (must contain .gitmodules).",
-)
-@click.option(
     "--cache-dir",
     type=click.Path(path_type=Path, file_okay=False),
     default=Path("recipe_cache"),
@@ -259,8 +260,12 @@ def fetch() -> None:
     f"{_DEFAULT_RATE_LIMIT_NO_TOKEN} without --token, {_DEFAULT_RATE_LIMIT_WITH_TOKEN} with it. "
     "Pass 0 to disable pacing entirely.",
 )
+@click.option(
+    "--since",
+    default=None,
+    help="Timestamp filter to include recently updated feedstocks.",
+)
 def fetch_feedstocks(
-    feedstocks_repo: Path,
     cache_dir: Path,
     force: bool,
     flush_every: int,
@@ -269,14 +274,16 @@ def fetch_feedstocks(
     retries: int,
     token: str | None,
     requests_per_second: float | None,
+    since: str | None,
 ) -> None:
     """Download and cache each feedstock's raw recipe file from GitHub.
 
     Reads feedstock names and their GitHub repo/branch from
-    <feedstocks-repo>/.gitmodules, then fetches only recipe/recipe.yaml (or
-    recipe/meta.yaml) for each -- no submodule checkout needed -- and stores
-    the raw text under --cache-dir. Run `generate maintainers` afterward to
-    turn the cache into maintainers.json.
+    conda-forge/feedstocks' .gitmodules (fetched over the network), then
+    fetches only recipe/recipe.yaml (or recipe/meta.yaml) for each -- no
+    submodule checkout needed -- and stores the raw text under --cache-dir.
+    Run `generate maintainers` afterward to turn the cache into
+    maintainers.json.
     """
     console = Console()
 
@@ -292,7 +299,26 @@ def fetch_feedstocks(
     all_sources = parse_gitmodules(gitmodules)
     console.print(f"Discovered {len(all_sources)} feedstocks in .gitmodules")
 
-    cache = RecipeCache(cache_dir)
+    if since is not None:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            TimeElapsedColumn(),
+            console=console,
+            transient=True,
+        ) as progress:
+            task = progress.add_task(
+                f"Fetching recently updated feedstocks since {since}...", total=None
+            )
+            updated_recipes = fetch_updated_feedstocks(
+                since,
+                token=token,
+                on_step=lambda description: progress.update(task, description=description + "..."),
+            )
+    else:
+        updated_recipes = set()
+
+    cache = RecipeCache(cache_dir, recipes_to_update=updated_recipes)
     todo = [
         source for name, source in sorted(all_sources.items()) if cache.should_fetch(name, force)
     ]

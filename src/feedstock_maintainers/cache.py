@@ -33,10 +33,11 @@ class CacheEntry:
 class RecipeCache:
     """Reads/writes <cache_dir>/<name>/<filename> plus <cache_dir>/manifest.json."""
 
-    def __init__(self, cache_dir: Path) -> None:
+    def __init__(self, cache_dir: Path, recipes_to_update: set[str] | None = None) -> None:
         self.cache_dir = cache_dir
         self._manifest_path = cache_dir / _MANIFEST_FILENAME
         self._entries: dict[str, CacheEntry] = {}
+        self._recipes_to_update = recipes_to_update
         self._load_manifest()
 
     def _load_manifest(self) -> None:
@@ -62,6 +63,8 @@ class RecipeCache:
     def should_fetch(self, name: str, force: bool) -> bool:
         """True if `name` needs a network fetch: unseen, forced, or last attempt errored."""
         if force:
+            return True
+        if self._recipes_to_update is not None and name in self._recipes_to_update:
             return True
         status = self.status_for(name)
         return status is None or status == "error"
