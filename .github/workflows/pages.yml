@@ -1,14 +1,26 @@
-name: update
+name: GH Pages deploy
 
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - main
+
   schedule:
-    - cron: '0 0/3 * * *'   # every three hours, on the hour (UTC)
+    - cron: '0 0/4 * * *'   # every four hours, on the hour (UTC)
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only allow one concurrent deployment
+concurrency:
+  group: pages
+  cancel-in-progress: true
 
 env:
   ARCHIVE_NAME: recipe_cache.tar.gz
   ARTIFACT_NAME: recipe-cache
-  SEED_URL: https://emsde.thath.net/recipe_cache.tar.gz
 
 jobs:
   find-source:
@@ -62,7 +74,7 @@ jobs:
         env:
           ARTIFACT_NAME: ${{ env.ARTIFACT_NAME }}
 
-  update:
+  deploy:
     needs: find-source
     runs-on: ubuntu-latest
     steps:
@@ -77,11 +89,6 @@ jobs:
           run-id: ${{ needs.find-source.outputs.run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Seed from external URL (first run / no prior artifact)
-        if: needs.find-source.outputs.run_id == ''
-        run: |
-          curl -fLsS -o "${{ env.ARCHIVE_NAME }}" "${{ env.SEED_URL }}"
-
       - uses: prefix-dev/setup-pixi@v0.10.0
         with:
           pixi-version: v0.78.0
@@ -92,34 +99,20 @@ jobs:
         run: |
           tar -xzf "${{ env.ARCHIVE_NAME }}"
 
-      - name: Update recipes
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SINCE: ${{ needs.find-source.outputs.since }}
+      - name: Build website
         run: |
-          if [ -n "$SINCE" ]; then
-            pixi run fsm fetch feedstocks --since "$SINCE"
-          else
-            pixi run fsm fetch feedstocks
-          fi
+          mkdir -p web/static/data/
+          cp graph-data.json web/static/data/maintainer-graph.json
+          pixi run build-web
 
-          pixi run fsm generate maintainers
-          pixi run fsm fetch maintainer-info maintainers.json
-          pixi run fsm generate graph-data
-
-      - name: Recompile archive
-        run: |
-          tar -czf "${{ env.ARCHIVE_NAME }}" \
-            recipe_cache \
-            maintainers.json \
-            maintainers-not-found.json \
-            maintainer-info.json \
-            graph-data.json
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-pages-artifact@v3
         with:
-          name: ${{ env.ARTIFACT_NAME }}
-          path: ${{ env.ARCHIVE_NAME }}
-          retention-days: 1
-          if-no-files-found: error
+          path: web/build
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

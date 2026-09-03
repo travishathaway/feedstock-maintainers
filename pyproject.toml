@@ -24,7 +24,7 @@ build-backend = "hatchling.build"
 
 [tool.pixi.workspace]
 channels = ["conda-forge"]
-platforms = ["linux-64", "osx-64", "osx-arm64", "win-64"]
+platforms = ["linux-64", "linux-aarch64", "osx-64", "osx-arm64", "win-64"]
 
 [tool.pixi.dependencies]
 python = ">=3.9"
@@ -45,6 +45,7 @@ pytest = ">=7.0"
 prek = ">=0.4.10"
 mypy = ">=1.16"
 types-pyyaml = ">=6.0"
+pnpm = "<12"
 
 [tool.pixi.environments]
 default = { solve-group = "default" }
@@ -60,6 +61,7 @@ generate-graph-data = "feedstock-maintainers generate graph-data --output web/st
 test = "pytest"
 lint = "prek run --all-files"
 lint-install = "prek install"
+build-web = "pnpm install --dir web/ && pnpm --dir web/ run build"
 
 # ── Pytest ────────────────────────────────────────────────────────────────────
 [tool.pytest.ini_options]
