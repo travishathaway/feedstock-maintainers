@@ -100,6 +100,8 @@ jobs:
           tar -xzf "${{ env.ARCHIVE_NAME }}"
 
       - name: Build website
+        env:
+          VITE_SITE_BASE_URL: https://travishathaway.github.io/feedstock-maintainers/
         run: |
           mkdir -p web/static/data/
           cp graph-data.json web/static/data/maintainer-graph.json
