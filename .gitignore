@@ -23,7 +23,7 @@ data/
 .hypothesis/
 
 # Jupyter
-*.ipynb
+# *.ipynb
 .ipynb_checkpoints/
 # notebooks/
 
