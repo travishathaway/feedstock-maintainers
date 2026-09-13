@@ -25,7 +25,7 @@ data/
 # Jupyter
 *.ipynb
 .ipynb_checkpoints/
-notebooks/
+# notebooks/
 
 # macOS
 .DS_Store

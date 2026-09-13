@@ -36,6 +36,7 @@ httpx = ">=0.27"
 networkx = ">=3.0"
 numpy = ">=1.24"
 scipy = ">=1.10"
+rich-click = ">=1.9.9,<2"
 
 [tool.pixi.pypi-dependencies]
 feedstock-maintainers = { path = ".", editable = true }
@@ -46,6 +47,9 @@ prek = ">=0.4.10"
 mypy = ">=1.16"
 types-pyyaml = ">=6.0"
 pnpm = "<12"
+ipython = ">=9.17.1,<10"
+jupyterlab = ">=4.6.3,<5"
+matplotlib = ">=3.11.1,<4"
 
 [tool.pixi.environments]
 default = { solve-group = "default" }

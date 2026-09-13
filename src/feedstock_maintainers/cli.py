@@ -6,8 +6,8 @@ import asyncio
 import json
 from pathlib import Path
 
-import click
 import httpx
+import rich_click as click
 from rich.console import Console
 from rich.progress import (
     BarColumn,
@@ -18,6 +18,7 @@ from rich.progress import (
     TimeElapsedColumn,
     TimeRemainingColumn,
 )
+from rich.table import Table
 
 from .cache import RecipeCache
 from .github import (
@@ -30,7 +31,12 @@ from .github import (
     fetch_user_info,
 )
 from .gitmodules import FeedstockSource, parse_gitmodules
-from .graph_data import build_graph
+from .graph_data import (
+    build_graph,
+    build_package_graph,
+    find_transitive_only_dependencies,
+    package_graph_to_json,
+)
 from .recipe import ParseError, extract_maintainers_from_text
 
 _DEFAULT_RATE_LIMIT_NO_TOKEN = 0.5
@@ -570,7 +576,7 @@ def generate_maintainers(cache_dir: Path, output: Path) -> None:
             console.print(f"  ... and {len(errors) - 20} more")
 
 
-@generate.command("graph-data")
+@generate.command("maintainer-graph")
 @click.option(
     "--maintainers-file",
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
@@ -589,11 +595,13 @@ def generate_maintainers(cache_dir: Path, output: Path) -> None:
     "--output",
     "-o",
     type=click.Path(path_type=Path, dir_okay=False),
-    default=Path("graph-data.json"),
+    default=Path("maintainer-graph.json"),
     show_default=True,
     help="Path to write the graphology-format maintainer collaboration graph JSON.",
 )
-def generate_graph_data(maintainers_file: Path, maintainer_info_file: Path, output: Path) -> None:
+def generate_maintainer_graph_data(
+    maintainers_file: Path, maintainer_info_file: Path, output: Path
+) -> None:
     """Build a maintainer collaboration graph from --maintainers-file and --maintainer-info-file.
 
     Nodes are maintainers with profile info in --maintainer-info-file; edges connect maintainers
@@ -624,6 +632,130 @@ def generate_graph_data(maintainers_file: Path, maintainer_info_file: Path, outp
     console.print(
         f"[green]Done.[/] {len(graph['nodes'])} nodes, {len(graph['edges'])} "
         f"edges written to {output}"
+    )
+
+
+@generate.command("package-graph")
+@click.argument(
+    "repodata",
+    nargs=-1,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+)
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=Path("package-graph.json"),
+    show_default=True,
+    help="Path to write the graphology-format packages graph JSON.",
+)
+def generate_package_graph_data(repodata: list[Path], output: Path) -> None:
+    """Build a package dependency graph from one or more REPODATA (repodata.json) files.
+
+    Nodes are package names (collapsed across all versions/builds); an edge points from a
+    package to each of its direct dependencies, weighted by how many distinct (version, build)
+    artifacts declared that dependency. Both the legacy `packages` and newer `packages.conda`
+    keys in each repodata file are read.
+    """
+    console = Console()
+
+    repodata_jsons = [json.loads(r.read_text(encoding="utf-8")) for r in repodata]
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        TimeElapsedColumn(),
+        console=console,
+        transient=True,
+    ) as progress:
+        task = progress.add_task("Building package dependency graph...", total=None)
+        graph = build_package_graph(
+            repodata_jsons,
+            on_step=lambda description: progress.update(task, description=description + "..."),
+        )
+
+    _atomic_write(output, package_graph_to_json(graph))
+
+    console.print(
+        f"[green]Done.[/] {graph.number_of_nodes()} nodes, {graph.number_of_edges()} "
+        f"edges written to {output}"
+    )
+
+
+@generate.command("transitive-dependencies")
+@click.argument(
+    "repodata",
+    nargs=-1,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+)
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=Path("transitive-dependencies.json"),
+    show_default=True,
+    help="Path to write the full ranked list as JSON.",
+)
+@click.option(
+    "--top",
+    "-n",
+    type=int,
+    default=25,
+    show_default=True,
+    help="Number of rows to print for each ranking.",
+)
+def generate_transitive_dependencies(repodata: list[Path], output: Path, top: int) -> None:
+    """Rank packages by how many other packages depend on them only transitively, from one or
+    more REPODATA (repodata.json) files.
+
+    Builds the same package dependency graph as `generate package-graph`, then for every package
+    reports how many packages depend on it only through a chain of dependencies and never as a
+    direct, declared dependency -- the ecosystem's "hidden" load-bearing packages.
+    """
+    console = Console()
+
+    repodata_jsons = [json.loads(r.read_text(encoding="utf-8")) for r in repodata]
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        TimeElapsedColumn(),
+        console=console,
+        transient=True,
+    ) as progress:
+        task = progress.add_task("Building package dependency graph...", total=None)
+        graph = build_package_graph(
+            repodata_jsons,
+            on_step=lambda description: progress.update(task, description=description + "..."),
+        )
+        progress.update(task, description="Ranking transitive-only dependencies...")
+        records = find_transitive_only_dependencies(graph)
+
+    _atomic_write(output, {"packages": records})
+
+    def _print_ranking(title: str, key: str) -> None:
+        ranked = sorted(records, key=lambda record: (-record[key], record["name"]))[:top]
+        table = Table(title=title)
+        table.add_column("Package")
+        table.add_column("Direct", justify="right")
+        table.add_column("Transitive", justify="right")
+        table.add_column("Transitive-only", justify="right")
+        table.add_column("Ratio", justify="right")
+        for record in ranked:
+            table.add_row(
+                record["name"],
+                str(record["direct_dependents"]),
+                str(record["transitive_dependents"]),
+                str(record["transitive_only_dependents"]),
+                f"{record['transitive_only_ratio']:.2f}",
+            )
+        console.print(table)
+
+    _print_ranking(f"Top {top} by transitive-only dependent count", "transitive_only_dependents")
+    _print_ranking(f"Top {top} by transitive-only ratio", "transitive_only_ratio")
+
+    console.print(
+        f"[green]Done.[/] {len(records)} packages ranked, full results written to {output}"
     )
 
 
