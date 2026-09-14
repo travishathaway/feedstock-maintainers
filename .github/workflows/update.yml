@@ -105,7 +105,7 @@ jobs:
 
           pixi run fsm generate maintainers
           pixi run fsm fetch maintainer-info maintainers.json
-          pixi run fsm generate graph-data
+          pixi run fsm generate maintainer-graph --output graph-data.json
 
       - name: Recompile archive
         run: |
