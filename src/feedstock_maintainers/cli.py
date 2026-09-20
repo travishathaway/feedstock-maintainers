@@ -100,6 +100,19 @@ def _copy_if_exists(src: Path, dst: Path, console: Console) -> None:
     console.print(f"Copied {src} -> {dst}")
 
 
+def _load_json_if_exists(path: Path, console: Console, label: str) -> dict:
+    """Load `path` as JSON, or return `{}` with a warning if it doesn't exist yet.
+
+    Used for `generate site-data` inputs derived by a `generate` command that predates them (so
+    an existing recipe cache/output directory from before that command started writing this file
+    legitimately won't have it yet) -- missing it shouldn't fail the whole run.
+    """
+    if not path.exists():
+        console.print(f"[yellow]Warning:[/] {path} not found, skipping ({label})")
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 async def _fetch_one(
     source: FeedstockSource,
     client: httpx.AsyncClient,
@@ -962,34 +975,52 @@ def generate() -> None:
     show_default=True,
     help="Path to write each feedstock's real, installable conda package name(s).",
 )
-def generate_maintainers(cache_dir: Path, output: Path, package_names_output: Path) -> None:
-    """Read cached recipe files and write each feedstock's maintainers and package name(s).
+@click.option(
+    "--license-output",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=Path("licenses.json"),
+    show_default=True,
+    help="Path to write each feedstock's declared license.",
+)
+def generate_maintainers(
+    cache_dir: Path, output: Path, package_names_output: Path, license_output: Path
+) -> None:
+    """Read cached recipe files and write each feedstock's maintainers, package name(s), and
+    license.
 
     Writes --output: {feedstock: [extra.recipe-maintainers, ...]}. Also writes
     --package-names-output: {feedstock: [package_name, ...]} -- the real, installable conda
     package name(s) declared by the recipe (more than one for a multi-output feedstock) -- for
-    use by `generate package-maintainers`.
+    use by `generate package-maintainers`. Also writes --license-output: {feedstock: license} --
+    the recipe's top-level `about.license`, omitted for feedstocks that don't declare one.
     """
     console = Console()
     cache = RecipeCache(cache_dir)
 
     maintainers: dict[str, list] = {}
     package_names: dict[str, list[str]] = {}
+    licenses: dict[str, str] = {}
     errors: list[tuple[str, str]] = []
     for entry in cache.found_entries():
         text = cache.read_text(entry)
         assert entry.filename is not None
         try:
-            maintainers[entry.name], package_names[entry.name] = parse_recipe(entry.filename, text)
+            names, packages, license_ = parse_recipe(entry.filename, text)
         except ParseError as exc:
             errors.append((entry.name, str(exc)))
+            continue
+        maintainers[entry.name] = names
+        package_names[entry.name] = packages
+        if license_ is not None:
+            licenses[entry.name] = license_
 
     _atomic_write(output, maintainers)
     _atomic_write(package_names_output, package_names)
+    _atomic_write(license_output, licenses)
 
     console.print(
-        f"[green]Done.[/] {len(maintainers)} feedstocks recorded in {output} and "
-        f"{package_names_output}"
+        f"[green]Done.[/] {len(maintainers)} feedstocks recorded in {output}, "
+        f"{package_names_output}, and {license_output}"
     )
     not_found = cache.counts()["not_found"]
     if not_found:
@@ -1496,6 +1527,14 @@ def generate_maintainer_coverage(
     help="Path to the ranking JSON file (as produced by `generate transitive-dependencies`).",
 )
 @click.option(
+    "--license-file",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=Path("licenses.json"),
+    show_default=True,
+    help="Path to each feedstock's declared license (as produced by `generate maintainers "
+    "--license-output`). Skipped with a warning (not an error) if it doesn't exist yet.",
+)
+@click.option(
     "--maintainer-history-file",
     type=click.Path(dir_okay=False, path_type=Path),
     default=Path("maintainer-history.json"),
@@ -1531,6 +1570,7 @@ def generate_site_data(
     package_downloads_file: Path,
     package_graph_file: Path,
     transitive_dependencies_file: Path,
+    license_file: Path,
     maintainer_history_file: Path,
     feedstock_count_history_file: Path,
     output_dir: Path,
@@ -1542,11 +1582,12 @@ def generate_site_data(
     --output-dir/maintainer-overview.json, --output-dir/package-overview.json,
     --output-dir/maintainers/index.json plus one --output-dir/maintainers/<login>.json per
     maintainer with a GitHub profile, and --output-dir/packages/index.json plus one
-    --output-dir/packages/<name>.json per package. Also copies --maintainer-history-file and
-    --feedstock-count-history-file into --output-dir unchanged (they're independently-maintained
-    time series, not derived here -- see `generate maintainer-history-append`/`generate
-    feedstock-count-append`). Meant to run only at deploy time (see
-    .github/workflows/pages.yml) -- nothing it writes is committed to git.
+    --output-dir/packages/<name>.json per package (each carrying a link to its feedstock(s) on
+    GitHub, plus --license-file's declared license when known). Also copies
+    --maintainer-history-file and --feedstock-count-history-file into --output-dir unchanged
+    (they're independently-maintained time series, not derived here -- see `generate
+    maintainer-history-append`/`generate feedstock-count-append`). Meant to run only at deploy
+    time (see .github/workflows/pages.yml) -- nothing it writes is committed to git.
     """
     console = Console()
 
@@ -1560,6 +1601,9 @@ def generate_site_data(
     transitive_dependencies_data = json.loads(
         transitive_dependencies_file.read_text(encoding="utf-8")
     )["packages"]
+    licenses_data = _load_json_if_exists(
+        license_file, console, "package profiles will have no license shown"
+    )
 
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -1604,6 +1648,8 @@ def generate_site_data(
         package_graph_data,
         transitive_dependencies_data,
         package_downloads_data,
+        package_names_data,
+        licenses_data,
     ):
         package_names_list.append(name)
         _write_json_fast(packages_dir / f"{name}.json", profile)

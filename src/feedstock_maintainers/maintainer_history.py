@@ -269,7 +269,7 @@ async def build_snapshot(
                 if fetched is None:
                     maintainers_by_feedstock[name] = []
                     return
-                names, _package_names = parse_recipe(fetched.filename, fetched.text)
+                names, _package_names, _license = parse_recipe(fetched.filename, fetched.text)
                 maintainers_by_feedstock[name] = names
             except (FetchError, ParseError):
                 # Keep whatever we knew before (empty for a newly-added feedstock) rather than

@@ -138,6 +138,7 @@ jobs:
             package-names.json \
             package-maintainers.json \
             package-downloads.json \
+            licenses.json \
             transitive-dependencies.json \
             maintainer-history.json \
             feedstock-count-history.json

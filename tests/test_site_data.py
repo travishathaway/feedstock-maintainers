@@ -14,6 +14,7 @@ from feedstock_maintainers.site_data import (
     compute_package_overview,
     compute_risk_score,
     compute_status,
+    feedstocks_by_package_name,
     is_team_handle,
     latest_month_downloads,
     lookup_package_downloads,
@@ -654,3 +655,140 @@ def test_package_profile_no_downloads_data_gives_empty_list_and_zero():
 
     assert profile["downloads_monthly"] == []
     assert profile["downloads_last_month"] == 0
+
+
+# ── feedstocks_by_package_name ───────────────────────────────────────────────────────────────
+
+
+def test_feedstocks_by_package_name_single_output_feedstock():
+    assert feedstocks_by_package_name({"numpy": ["numpy"]}) == {"numpy": ["numpy"]}
+
+
+def test_feedstocks_by_package_name_falls_back_to_feedstock_name_when_empty():
+    assert feedstocks_by_package_name({"widget": []}) == {"widget": ["widget"]}
+
+
+def test_feedstocks_by_package_name_multi_output_feedstock():
+    result = feedstocks_by_package_name({"boost": ["libboost", "boost-cpp"]})
+    assert result == {"libboost": ["boost"], "boost-cpp": ["boost"]}
+
+
+def test_feedstocks_by_package_name_unions_and_sorts_multiple_feedstocks():
+    result = feedstocks_by_package_name({"blas": ["libblas"], "lapack": ["libblas"]})
+    assert result == {"libblas": ["blas", "lapack"]}
+
+
+# ── build_package_profiles: feedstocks + license ─────────────────────────────────────────────
+
+
+def test_package_profile_feedstock_link_derived_from_package_names():
+    package_maintainers = {"numpy": ["alice"]}
+    profile = dict(
+        build_package_profiles(
+            package_maintainers,
+            {},
+            _package_graph({}, []),
+            [],
+            {},
+            package_names={"numpy": ["numpy"]},
+        )
+    )["numpy"]
+
+    assert profile["feedstocks"] == [
+        {"name": "numpy", "url": "https://github.com/conda-forge/numpy-feedstock"}
+    ]
+
+
+def test_package_profile_feedstock_link_falls_back_to_package_name_without_package_names():
+    package_maintainers = {"numpy": ["alice"]}
+    profile = dict(build_package_profiles(package_maintainers, {}, _package_graph({}, []), [], {}))[
+        "numpy"
+    ]
+
+    assert profile["feedstocks"] == [
+        {"name": "numpy", "url": "https://github.com/conda-forge/numpy-feedstock"}
+    ]
+
+
+def test_package_profile_multi_output_feedstock_produces_one_feedstock_link():
+    package_maintainers = {"libboost": ["alice"], "boost-cpp": ["alice"]}
+    profile = dict(
+        build_package_profiles(
+            package_maintainers,
+            {},
+            _package_graph({}, []),
+            [],
+            {},
+            package_names={"boost": ["libboost", "boost-cpp"]},
+        )
+    )["libboost"]
+
+    assert profile["feedstocks"] == [
+        {"name": "boost", "url": "https://github.com/conda-forge/boost-feedstock"}
+    ]
+
+
+def test_package_profile_package_from_multiple_feedstocks_lists_all_sorted():
+    package_maintainers = {"libblas": ["alice"]}
+    profile = dict(
+        build_package_profiles(
+            package_maintainers,
+            {},
+            _package_graph({}, []),
+            [],
+            {},
+            package_names={"blas": ["libblas"], "lapack": ["libblas"]},
+        )
+    )["libblas"]
+
+    assert [f["name"] for f in profile["feedstocks"]] == ["blas", "lapack"]
+
+
+def test_package_profile_license_from_owning_feedstock():
+    package_maintainers = {"numpy": ["alice"]}
+    profile = dict(
+        build_package_profiles(
+            package_maintainers,
+            {},
+            _package_graph({}, []),
+            [],
+            {},
+            package_names={"numpy": ["numpy"]},
+            licenses={"numpy": "BSD-3-Clause"},
+        )
+    )["numpy"]
+
+    assert profile["license"] == "BSD-3-Clause"
+
+
+def test_package_profile_license_none_when_not_declared():
+    package_maintainers = {"numpy": ["alice"]}
+    profile = dict(
+        build_package_profiles(
+            package_maintainers,
+            {},
+            _package_graph({}, []),
+            [],
+            {},
+            package_names={"numpy": ["numpy"]},
+        )
+    )["numpy"]
+
+    assert profile["license"] is None
+
+
+def test_package_profile_license_picks_first_feedstock_that_declares_one():
+    package_maintainers = {"libblas": ["alice"]}
+    profile = dict(
+        build_package_profiles(
+            package_maintainers,
+            {},
+            _package_graph({}, []),
+            [],
+            {},
+            package_names={"blas": ["libblas"], "lapack": ["libblas"]},
+            licenses={"lapack": "BSD-3-Clause"},
+        )
+    )["libblas"]
+
+    assert profile["license"] == "BSD-3-Clause"

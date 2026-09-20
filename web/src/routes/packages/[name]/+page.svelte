@@ -58,11 +58,25 @@
 			<div class="d-flex align-items-center gap-2 flex-wrap">
 				<h2 class="mb-0">{profile.name}</h2>
 				<span class="badge {STATUS_BADGE_CLASSES[profile.status]}">{STATUS_LABELS[profile.status]}</span>
+                {#if profile.license}
+                    <span class="badge text-bg-secondary">{profile.license}</span>
+                {/if}
+                <div class="d-flex align-items-center gap-2 flex-wrap ms-2 mt-2">
+                    {#each profile.feedstocks as feedstock (feedstock.name)}
+                        <a
+                            href={feedstock.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            class="btn btn-outline-secondary btn-sm text-decoration-none"
+                        >
+                            <i class="bi bi-github"></i> {feedstock.name}-feedstock
+                        </a>
+                    {/each}
+                </div>
 			</div>
-			<!-- Static placeholders -- no version/license/description parsing exists yet, and no
-			     per-feedstock commit-timestamp tracking (plan decision #7). -->
-			<p class="text-body-secondary small mb-0 mt-1">A conda-forge package.</p>
-			<p class="text-body-secondary small mb-0">v— · License unknown · Last updated unknown</p>
+			<!-- Static placeholder -- no version/description parsing or per-feedstock
+			     commit-timestamp tracking exists yet (plan decision #7). -->
+			<p class="text-body-secondary small mb-0 mt-2">Last updated unknown</p>
 		</div>
 	</div>
 

@@ -1,4 +1,5 @@
-"""Recipe parsing: pull the maintainer list out of meta.yaml / recipe.yaml text."""
+"""Recipe parsing: pull the maintainer list, package name(s), and license out of meta.yaml /
+recipe.yaml text."""
 
 from __future__ import annotations
 
@@ -186,6 +187,26 @@ def _extract_from_data(data) -> list | None:
     return maintainers
 
 
+def _extract_license_from_data(data) -> str | None:
+    """Return a recipe's top-level `about.license`, or `None` if absent/malformed.
+
+    Only the top-level `about` block is read, never a per-output one -- conda-forge convention
+    puts a single license declaration there even for multi-output feedstocks (mirrors how
+    `extra.recipe-maintainers` is read the same way in `_extract_from_data`), and it's what
+    applies to every package name the feedstock produces.
+    """
+    if not isinstance(data, dict):
+        return None
+    about = data.get("about")
+    if not isinstance(about, dict):
+        return None
+    license_ = about.get("license")
+    if not isinstance(license_, str):
+        return None
+    license_ = license_.strip()
+    return license_ or None
+
+
 def _extract_package_names_from_data(data) -> list[str]:
     """Return the real, installable conda package name(s) declared by a parsed recipe.
 
@@ -295,20 +316,29 @@ def extract_package_names_from_text(filename: str, text: str) -> list[str]:
     return _extract_package_names_from_data(data)
 
 
-def parse_recipe(filename: str, text: str) -> tuple[list, list[str]]:
-    """Return (maintainers, package_names) for a recipe.yaml/meta.yaml, parsed as needed.
+def extract_license_from_text(filename: str, text: str) -> str | None:
+    """Return the top-level `about.license` found in a recipe.yaml/meta.yaml, or `None`."""
+    data = _parse_recipe_yaml_raw(text) if filename == "recipe.yaml" else _parse_meta_yaml(text)
+    return _extract_license_from_data(data)
+
+
+def parse_recipe(filename: str, text: str) -> tuple[list, list[str], str | None]:
+    """Return (maintainers, package_names, license) for a recipe.yaml/meta.yaml, parsed as needed.
 
     For meta.yaml this parses once (a single jinja render already resolves both). For recipe.yaml
-    this parses the unrendered text for maintainers (robust) and separately, best-effort, the
-    rendered text for package names (see `_parse_recipe_yaml_rendered`) -- so a rendering issue
-    that only affects a templated package name never costs the feedstock its maintainer list too.
+    this parses the unrendered text for maintainers and license (robust) and separately,
+    best-effort, the rendered text for package names (see `_parse_recipe_yaml_rendered`) -- so a
+    rendering issue that only affects a templated package name never costs the feedstock its
+    maintainer list or license too.
     """
     if filename == "recipe.yaml":
         raw = _parse_recipe_yaml_raw(text)
         maintainers = _extract_from_data(raw) or []
+        license_ = _extract_license_from_data(raw)
         package_names = _extract_package_names_from_data(_parse_recipe_yaml_rendered(text, raw))
     else:
         data = _parse_meta_yaml(text)
         maintainers = _extract_from_data(data) or []
         package_names = _extract_package_names_from_data(data)
-    return maintainers, package_names
+        license_ = _extract_license_from_data(data)
+    return maintainers, package_names, license_

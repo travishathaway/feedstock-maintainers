@@ -6,6 +6,7 @@ import pytest
 
 from feedstock_maintainers.recipe import (
     ParseError,
+    extract_license_from_text,
     extract_maintainers_from_text,
     extract_package_names_from_text,
     parse_recipe,
@@ -92,11 +93,53 @@ def test_package_name_malformed_output_entries_are_skipped_not_fatal():
 
 def test_parse_recipe_returns_both_lists_from_one_parse():
     text = "package:\n  name: widget\nextra:\n  recipe-maintainers: [alice, bob]\n"
-    maintainers, package_names = parse_recipe("meta.yaml", text)
+    maintainers, package_names, license_ = parse_recipe("meta.yaml", text)
     assert maintainers == ["alice", "bob"]
     assert package_names == ["widget"]
+    assert license_ is None
 
 
 def test_parse_recipe_raises_parse_error_on_unparsable_yaml():
     with pytest.raises(ParseError):
         parse_recipe("recipe.yaml", "package: [unterminated\n")
+
+
+def test_extract_license_from_meta_yaml():
+    text = "about:\n  license: BSD-3-Clause\n"
+    assert extract_license_from_text("meta.yaml", text) == "BSD-3-Clause"
+
+
+def test_extract_license_from_recipe_yaml():
+    text = "about:\n  license: Apache-2.0\n"
+    assert extract_license_from_text("recipe.yaml", text) == "Apache-2.0"
+
+
+def test_extract_license_ignores_per_output_about_uses_top_level():
+    text = (
+        "about:\n"
+        "  license: BSD-3-Clause\n"
+        "outputs:\n"
+        "  - name: libwidget\n"
+        "    about:\n"
+        "      license: MIT\n"
+    )
+    assert extract_license_from_text("meta.yaml", text) == "BSD-3-Clause"
+
+
+def test_extract_license_missing_about_returns_none():
+    assert extract_license_from_text("meta.yaml", "package:\n  name: widget\n") is None
+
+
+def test_extract_license_missing_license_key_returns_none():
+    assert extract_license_from_text("meta.yaml", "about:\n  summary: a widget\n") is None
+
+
+def test_extract_license_renders_meta_yaml_jinja():
+    text = '{% set lic = "MIT" %}\nabout:\n  license: {{ lic }}\n'
+    assert extract_license_from_text("meta.yaml", text) == "MIT"
+
+
+def test_parse_recipe_returns_license_for_recipe_yaml():
+    text = "package:\n  name: widget\nabout:\n  license: MIT\n"
+    _maintainers, _package_names, license_ = parse_recipe("recipe.yaml", text)
+    assert license_ == "MIT"

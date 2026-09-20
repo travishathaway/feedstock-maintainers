@@ -169,6 +169,7 @@ def test_generate_maintainers_reads_from_cache(tmp_path):
 
     output = tmp_path / "maintainers.json"
     package_names_output = tmp_path / "package-names.json"
+    license_output = tmp_path / "licenses.json"
     runner = CliRunner()
     result = runner.invoke(
         main,
@@ -181,11 +182,55 @@ def test_generate_maintainers_reads_from_cache(tmp_path):
             str(output),
             "--package-names-output",
             str(package_names_output),
+            "--license-output",
+            str(license_output),
         ],
     )
 
     assert result.exit_code == 0, result.output
     assert json.loads(output.read_text()) == {"widget-feedstock": ["alice", "bob"]}
+
+
+def test_generate_maintainers_also_writes_license_omitting_undeclared(tmp_path):
+    cache_dir = tmp_path / "cache"
+    (cache_dir / "widget-feedstock").mkdir(parents=True)
+    (cache_dir / "widget-feedstock" / "recipe.yaml").write_text(
+        "extra:\n  recipe-maintainers: [alice]\nabout:\n  license: BSD-3-Clause\n"
+    )
+    (cache_dir / "no-license-feedstock").mkdir(parents=True)
+    (cache_dir / "no-license-feedstock" / "recipe.yaml").write_text(
+        "extra:\n  recipe-maintainers: [bob]\n"
+    )
+    (cache_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "widget-feedstock": {"status": "found", "filename": "recipe.yaml"},
+                "no-license-feedstock": {"status": "found", "filename": "recipe.yaml"},
+            }
+        )
+    )
+
+    output = tmp_path / "maintainers.json"
+    package_names_output = tmp_path / "package-names.json"
+    license_output = tmp_path / "licenses.json"
+    result = CliRunner().invoke(
+        main,
+        [
+            "generate",
+            "maintainers",
+            "--cache-dir",
+            str(cache_dir),
+            "--output",
+            str(output),
+            "--package-names-output",
+            str(package_names_output),
+            "--license-output",
+            str(license_output),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(license_output.read_text()) == {"widget-feedstock": "BSD-3-Clause"}
 
 
 def test_generate_maintainers_also_writes_package_names_for_multi_output_feedstock(tmp_path):
@@ -206,6 +251,7 @@ def test_generate_maintainers_also_writes_package_names_for_multi_output_feedsto
 
     output = tmp_path / "maintainers.json"
     package_names_output = tmp_path / "package-names.json"
+    license_output = tmp_path / "licenses.json"
     runner = CliRunner()
     result = runner.invoke(
         main,
@@ -218,6 +264,8 @@ def test_generate_maintainers_also_writes_package_names_for_multi_output_feedsto
             str(output),
             "--package-names-output",
             str(package_names_output),
+            "--license-output",
+            str(license_output),
         ],
     )
 

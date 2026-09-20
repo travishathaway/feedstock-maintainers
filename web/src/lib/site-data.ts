@@ -100,6 +100,11 @@ export interface PackageMaintainer {
 	name: string | null;
 }
 
+export interface FeedstockLink {
+	name: string;
+	url: string;
+}
+
 export interface DownloadsMonthlyPoint {
 	month: string;
 	downloads: number;
@@ -115,6 +120,8 @@ export interface PackageProfile {
 	downloads_monthly: DownloadsMonthlyPoint[];
 	downloads_last_month: number;
 	status: PackageStatus;
+	feedstocks: FeedstockLink[];
+	license: string | null;
 }
 
 function resolveDataUrl(path: string): string {

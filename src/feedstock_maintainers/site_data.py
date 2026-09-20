@@ -18,6 +18,9 @@ the already-parsed contents of the root `*.json` artifacts:
     transitive_only_dependents, transitive_only_ratio}, ...]}, on-disk order sorted by
     `transitive_only_dependents` (NOT `transitive_dependents` -- always re-sort before using it
     for a "most depended-on" ranking).
+  - `licenses.json`: {feedstock: license} (as produced by `generate maintainers
+    --license-output`), omitted for a feedstock whose recipe declares none. Optional -- may not
+    exist for an older recipe cache, in which case every package profile's `license` is `None`.
 
 Design decisions worth calling out (kept consistent across every output so the same number never
 looks different on two pages):
@@ -58,6 +61,8 @@ _RISK_PACKAGES_LIMIT = 6
 _TRANSITIVE_DEPENDENCIES_LIMIT = 6
 _CO_MAINTAINERS_LIMIT = 12
 _NOTABLE_DEPENDENTS_LIMIT = 8
+
+_FEEDSTOCK_URL_TEMPLATE = "https://github.com/conda-forge/{feedstock}-feedstock"
 
 
 def is_team_handle(login: str) -> bool:
@@ -509,6 +514,23 @@ def _package_graph_indices(
     return successors, predecessors, pagerank_by_name
 
 
+def feedstocks_by_package_name(package_names: dict[str, list[str]]) -> dict[str, list[str]]:
+    """Invert {feedstock: [package_name, ...]} into {package_name: [feedstock, ...]} (sorted).
+
+    Mirrors `graph_data.build_package_maintainers`'s join exactly: a feedstock missing from
+    `package_names` (or mapped to an empty list, e.g. its recipe failed to parse) falls back to
+    using the feedstock name itself as the package name, so every feedstock is still reachable
+    under some name. A package name produced by more than one feedstock (rare -- e.g. "blas" and
+    "lapack" both produce "libblas") lists all of them, sorted, matching how `package-maintainers
+    .json` already unions maintainers across such feedstocks rather than picking just one.
+    """
+    by_package: dict[str, set[str]] = defaultdict(set)
+    for feedstock, names in package_names.items():
+        for package in names or [feedstock]:
+            by_package[package].add(feedstock)
+    return {package: sorted(feedstocks) for package, feedstocks in by_package.items()}
+
+
 def build_package_profile(
     name: str,
     maintainer_logins: list[str],
@@ -518,9 +540,13 @@ def build_package_profile(
     pagerank_by_name: dict[str, float],
     transitive_by_name: dict[str, dict],
     normalized_package_downloads: dict[str, dict[str, int]],
+    feedstocks: list[str],
+    license: str | None,
 ) -> dict[str, Any]:
     """Build one `packages/<name>.json` payload. `normalized_package_downloads` must already be
-    the output of `normalize_package_downloads`."""
+    the output of `normalize_package_downloads`. `feedstocks` is the (sorted, non-empty) list of
+    feedstock(s) that produce this package name (see `feedstocks_by_package_name`); `license` is
+    the declared license of the first of them that has one, or `None`."""
     handles = team_handles(maintainer_logins)
     maintainer_count = len([login for login in maintainer_logins if login not in handles])
     maintainers = [
@@ -556,6 +582,11 @@ def build_package_profile(
     ]
     downloads_last_month = downloads_monthly[-1]["downloads"] if downloads_monthly else 0
 
+    feedstock_links = [
+        {"name": feedstock, "url": _FEEDSTOCK_URL_TEMPLATE.format(feedstock=feedstock)}
+        for feedstock in feedstocks
+    ]
+
     return {
         "name": name,
         "maintainers": maintainers,
@@ -566,6 +597,8 @@ def build_package_profile(
         "downloads_monthly": downloads_monthly,
         "downloads_last_month": downloads_last_month,
         "status": compute_status(maintainer_count),
+        "feedstocks": feedstock_links,
+        "license": license,
     }
 
 
@@ -575,14 +608,25 @@ def build_package_profiles(
     package_graph: dict,
     transitive_dependency_records: list[dict],
     package_downloads: dict[str, dict[str, int]],
+    package_names: dict[str, list[str]] | None = None,
+    licenses: dict[str, str] | None = None,
 ) -> Iterator[tuple[str, dict[str, Any]]]:
     """Yield `(name, profile)` for every package in `package_maintainers` (sorted) -- exactly the
     names `packages/index.json` should list.
+
+    `package_names` (as produced by `generate maintainers --package-names-output`) and `licenses`
+    (as produced by `generate maintainers --license-output`) are both optional -- omitting them
+    (or passing feedstocks/names they don't cover) just means the resulting profile(s) have no
+    known feedstock link or license, rather than raising.
     """
     successors, predecessors, pagerank_by_name = _package_graph_indices(package_graph)
     transitive_by_name = {record["name"]: record for record in transitive_dependency_records}
     normalized_package_downloads = normalize_package_downloads(package_downloads)
+    feedstocks_by_package = feedstocks_by_package_name(package_names or {})
+    licenses = licenses or {}
     for name in sorted(package_maintainers):
+        feedstocks = feedstocks_by_package.get(name) or [name]
+        license = next((licenses[fs] for fs in feedstocks if fs in licenses), None)
         yield (
             name,
             build_package_profile(
@@ -594,5 +638,7 @@ def build_package_profiles(
                 pagerank_by_name,
                 transitive_by_name,
                 normalized_package_downloads,
+                feedstocks,
+                license,
             ),
         )
