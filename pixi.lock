@@ -18022,4 +18022,4 @@ packages:
   - scipy>=1.10
   - zstandard>=0.22
   - pyarrow>=15
-  requires_python: '>=3.9'
+  requires_python: '>=3.12'
