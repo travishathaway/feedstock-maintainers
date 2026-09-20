@@ -107,8 +107,13 @@ jobs:
 
           pixi run fsm generate maintainers
           pixi run fsm fetch maintainer-info --maintainers-file maintainers.json
-          pixi run fsm generate maintainer-graph --output graph-data.json
+          pixi run fsm generate maintainer-graph --output maintainer-graph.json
           pixi run fsm generate package-maintainers
+          pixi run fsm generate package-graph -p linux-64 -p noarch --output package-graph.json
+
+      - name: Fetch package download stats
+        run: |
+          pixi run fsm fetch package-downloads
 
       - name: Update maintainer + feedstock count history (monthly)
         run: |
@@ -139,9 +144,11 @@ jobs:
             maintainers.json \
             maintainers-not-found.json \
             maintainer-info.json \
-            graph-data.json \
+            maintainer-graph.json \
+            package-graph.json \
             package-names.json \
-            package-maintainers.json
+            package-maintainers.json \
+            package-downloads.json
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
