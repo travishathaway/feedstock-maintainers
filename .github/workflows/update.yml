@@ -108,6 +108,7 @@ jobs:
           pixi run fsm generate maintainer-graph --output maintainer-graph.json
           pixi run fsm generate package-maintainers
           pixi run fsm generate package-graph -p linux-64 -p noarch --output package-graph.json
+          pixi run fsm generate transitive-dependencies -p linux-64 -p noarch --output transitive-dependencies.json
 
       - name: Fetch package download stats
         run: |
@@ -135,6 +136,7 @@ jobs:
             package-names.json \
             package-maintainers.json \
             package-downloads.json \
+            transitive-dependencies.json \
             maintainer-history.json \
             feedstock-count-history.json
 
