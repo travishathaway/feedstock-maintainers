@@ -79,6 +79,25 @@ def test_run_backfill_resumes_from_existing_output(tmp_path, monkeypatch):
     ]
 
 
+def test_run_backfill_resumes_past_a_mid_month_append_entry(tmp_path, monkeypatch):
+    """Regression test: a mid-month entry from `append_current_point` must not be mistaken for
+    a high-water mark that makes every earlier, still-missing month look already covered."""
+    output = tmp_path / "feedstock-count-history.json"
+    output.write_text(json.dumps([{"date": "2024-02-15", "feedstock_count": 9}]))
+
+    commits_by_month = {date(2024, 1, 31): "commit-jan"}
+    monkeypatch.setattr(fch, "resolve_commit_at", lambda d, **k: commits_by_month.get(d))
+    monkeypatch.setattr(fch, "fetch_submodule_tree", lambda sha, **k: _tree(3))
+
+    fch.run_backfill(date(2024, 1, 1), date(2024, 2, 29), output)
+
+    history = json.loads(output.read_text())
+    assert history == [
+        {"date": "2024-01-31", "feedstock_count": 3},
+        {"date": "2024-02-15", "feedstock_count": 9},
+    ]
+
+
 def test_run_backfill_flushes_after_every_month(tmp_path, monkeypatch):
     """An interrupted run should leave whatever months completed so far on disk."""
     commits_by_month = {date(2024, 1, 31): "commit-jan", date(2024, 2, 29): "commit-feb"}

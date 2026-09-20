@@ -115,6 +115,8 @@ jobs:
           pixi run fsm fetch package-downloads
 
       - name: Update maintainer + feedstock count history (monthly)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           pixi run fsm generate maintainer-history-append \
             --maintainers-file maintainers.json \

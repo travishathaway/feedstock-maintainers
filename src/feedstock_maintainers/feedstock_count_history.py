@@ -37,17 +37,27 @@ def run_backfill(
     and flushes after every month. No separate checkpoint file is needed -- unlike
     `maintainer_history`, a month's count depends only on that month's own commit, never on the
     previous one, so there's no state to carry forward between runs.
+
+    Coverage is tracked per (year, month) rather than via a simple "after the last date" cutoff,
+    because `output_path` is shared with `append_current_point`: its most recent entry is usually
+    a mid-month "today" date (from the daily append job) rather than a month-end date, and that
+    date is always later than every genuinely-missing historical month-end candidate. A cutoff
+    comparison would treat that as "everything before it is already covered" and never backfill
+    anything. New entries are inserted in chronological order and the file is re-sorted after each
+    flush, since they land before that existing mid-month tail entry.
     """
     step = on_step or (lambda _description: None)
 
     history: list[dict] = (
         json.loads(output_path.read_text(encoding="utf-8")) if output_path.exists() else []
     )
+    covered_months = {
+        (parsed.year, parsed.month)
+        for parsed in (date.fromisoformat(entry["date"]) for entry in history)
+    }
 
     months = monthly_snapshot_dates(start, end)
-    if history:
-        last_date = date.fromisoformat(history[-1]["date"])
-        months = [month for month in months if month > last_date]
+    months = [month for month in months if (month.year, month.month) not in covered_months]
 
     for target_date in months:
         step(f"Resolving commit as of {target_date.isoformat()}")
@@ -59,6 +69,7 @@ def run_backfill(
         step(f"Counting feedstocks at {commit_sha[:8]}")
         tree = fetch_submodule_tree(commit_sha, token=token, retries=retries)
         history.append({"date": target_date.isoformat(), "feedstock_count": len(tree)})
+        history.sort(key=lambda entry: entry["date"])
         _atomic_write_json(output_path, history)
 
 
