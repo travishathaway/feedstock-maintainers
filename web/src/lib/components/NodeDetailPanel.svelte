@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { selectedUsername, selectedNodeAttributes } from '$lib/stores/graph';
+	import { formatNumber } from '$lib/format';
 
 	function close() {
 		selectedUsername.set(null);
@@ -47,7 +48,7 @@
 				<dd class="col-6 text-truncate">{attrs.location}</dd>
 			{/if}
 			<dt class="col-6">Total feedstocks</dt>
-			<dd class="col-6">{attrs.feedstockCount}</dd>
+			<dd class="col-6">{formatNumber(attrs.feedstockCount)}</dd>
 		</dl>
 
 		<h6 class="text-uppercase text-body-secondary fw-semibold small mb-2 d-flex align-items-center gap-2">
@@ -57,7 +58,9 @@
 			<dt class="col-7">Degree centrality</dt>
 			<dd class="col-5 text-end font-monospace">{formatMetric(attrs.degreeCentrality)}</dd>
 			<dt class="col-7">Weighted degree</dt>
-			<dd class="col-5 text-end font-monospace">{attrs.weightedDegree ?? '—'}</dd>
+			<dd class="col-5 text-end font-monospace">
+				{attrs.weightedDegree == null ? '—' : formatNumber(attrs.weightedDegree)}
+			</dd>
 			<dt class="col-7">Betweenness</dt>
 			<dd class="col-5 text-end font-monospace">{formatMetric(attrs.betweennessCentrality)}</dd>
 			<dt class="col-7">PageRank</dt>

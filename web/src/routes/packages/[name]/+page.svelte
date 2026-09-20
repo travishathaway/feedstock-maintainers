@@ -3,6 +3,7 @@
 	import { resolve } from '$app/paths';
 	import DownloadsBarChart from '$lib/components/DownloadsBarChart.svelte';
 	import { loadPackageProfile, type PackageProfile, type PackageStatus } from '$lib/site-data';
+	import { formatNumber } from '$lib/format';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -20,10 +21,6 @@
 			loading = false;
 		}
 	});
-
-	function formatNumber(value: number): string {
-		return value.toLocaleString();
-	}
 
 	const STATUS_LABELS: Record<PackageStatus, string> = {
 		at_risk: 'At risk',

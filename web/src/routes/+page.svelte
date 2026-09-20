@@ -4,6 +4,7 @@
 	import Avatar from '$lib/components/Avatar.svelte';
 	import FeedstockCountChart from '$lib/components/FeedstockCountChart.svelte';
 	import { loadMaintainerOverview, type MaintainerOverview } from '$lib/site-data';
+	import { formatNumber, formatPercent } from '$lib/format';
 
 	let overview = $state<MaintainerOverview | undefined>(undefined);
 	let error = $state<string | undefined>(undefined);
@@ -18,10 +19,6 @@
 			loading = false;
 		}
 	});
-
-	function formatNumber(value: number): string {
-		return value.toLocaleString();
-	}
 </script>
 
 <div class="col-12">
@@ -56,9 +53,11 @@
 		</div>
 		<div class="col me-4 card text-bg-light">
 			<div class="card-body">
-				<span class="h3">{overview.stats.avg_maintainers_per_feedstock}</span>
+				<span class="h3">{formatNumber(overview.stats.avg_maintainers_per_feedstock)}</span>
 				<p class="">Average maintainers per feedstock</p>
-				<p class="small text-secondary">Median is {overview.stats.median_maintainers_per_feedstock}</p>
+				<p class="small text-secondary">
+					Median is {formatNumber(overview.stats.median_maintainers_per_feedstock)}
+				</p>
 			</div>
 		</div>
 		<div class="col card text-bg-light">
@@ -67,7 +66,7 @@
 				<p class="">Single maintainer feedstocks</p>
 				<p class="">
 					<span class="badge text-bg-warning"
-						>{overview.stats.single_maintainer_feedstock_pct}% of all feedstocks</span
+						>{formatPercent(overview.stats.single_maintainer_feedstock_pct)} of all feedstocks</span
 					>
 				</p>
 			</div>

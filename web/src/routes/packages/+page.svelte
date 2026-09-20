@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { resolve } from '$app/paths';
 	import { loadPackageOverview, type PackageOverview, type PackageStatus } from '$lib/site-data';
+	import { formatNumber, formatPercent } from '$lib/format';
 
 	let overview = $state<PackageOverview | undefined>(undefined);
 	let error = $state<string | undefined>(undefined);
@@ -16,10 +17,6 @@
 			loading = false;
 		}
 	});
-
-	function formatNumber(value: number): string {
-		return value.toLocaleString();
-	}
 
 	const STATUS_LABELS: Record<PackageStatus, string> = {
 		at_risk: 'At risk',
@@ -75,7 +72,7 @@
 				<p class="">Packages with ≤2 maintainers</p>
 				<p class="">
 					<span class="badge text-bg-warning"
-						>{overview.stats.packages_le2_maintainers_pct}% of all packages</span
+						>{formatPercent(overview.stats.packages_le2_maintainers_pct)} of all packages</span
 					>
 				</p>
 			</div>
@@ -111,7 +108,7 @@
 				Ranked by download volume relative to maintainer count. These are the packages a bus
 				factor of one or two would hurt the most.
 			</p>
-			<table class="table table-sm align-middle mb-0">
+			<table class="table align-middle mb-0">
 				<thead>
 					<tr>
 						<th>Package</th>
@@ -148,7 +145,7 @@
 					<p class="small text-secondary">
 						Packages other feedstocks pull in indirectly, not just direct installs.
 					</p>
-					<table class="table table-sm align-middle mb-0">
+					<table class="table align-middle mb-0">
 						<thead>
 							<tr>
 								<th>Package</th>
@@ -181,7 +178,7 @@
 						Latest merged builds, most recent first.
 						<span class="fst-italic">Placeholder data -- not yet wired to a real source.</span>
 					</p>
-					<table class="table table-sm align-middle mb-0">
+					<table class="table align-middle mb-0">
 						<thead>
 							<tr>
 								<th>Package</th>

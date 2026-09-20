@@ -4,6 +4,7 @@
 	import Avatar from '$lib/components/Avatar.svelte';
 	import EgoNetwork from '$lib/components/EgoNetwork.svelte';
 	import { loadMaintainerProfile, type MaintainerProfile } from '$lib/site-data';
+	import { formatNumber } from '$lib/format';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -22,10 +23,6 @@
 			loading = false;
 		}
 	});
-
-	function formatNumber(value: number): string {
-		return value.toLocaleString();
-	}
 
 	const VISIBLE_PACKAGE_COUNT = 8;
 </script>

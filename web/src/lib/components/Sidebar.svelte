@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import type TomSelect from 'tom-select';
 	import { usernames, selectedUsername, resetViewRequested, degreesOfSeparation } from '$lib/stores/graph';
+	import { formatNumber } from '$lib/format';
 
 	let mobileSelectEl: HTMLSelectElement;
 	let desktopSelectEl: HTMLSelectElement;
@@ -61,7 +62,7 @@
 	{#if $selectedUsername}
 		<div class="mb-3">
 			<label for="{idPrefix}-degrees" class="form-label small fw-semibold">
-				Degrees of separation: {$degreesOfSeparation}
+				Degrees of separation: {formatNumber($degreesOfSeparation)}
 			</label>
 			<div class="d-flex gap-2 align-items-center">
 				<button
