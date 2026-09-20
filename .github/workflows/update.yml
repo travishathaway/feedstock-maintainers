@@ -120,6 +120,8 @@ jobs:
             --maintainers-file maintainers.json \
             --history-file maintainer-history.json
 
+          pixi run fsm fetch feedstock-count-history-backfill
+
           pixi run fsm generate feedstock-count-append \
             --maintainers-file maintainers.json \
             --history-file feedstock-count-history.json
