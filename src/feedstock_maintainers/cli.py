@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -51,6 +52,12 @@ from .package_downloads import (
 )
 from .recipe import ParseError, parse_recipe
 from .repodata import RepodataFetchError, fetch_all_repodata
+from .site_data import (
+    build_maintainer_profiles,
+    build_package_profiles,
+    compute_maintainer_overview,
+    compute_package_overview,
+)
 
 _DEFAULT_RATE_LIMIT_NO_TOKEN = 0.5
 _DEFAULT_RATE_LIMIT_WITH_TOKEN = 1.2
@@ -60,6 +67,37 @@ def _atomic_write(output: Path, data: dict | list) -> None:
     tmp = output.with_suffix(output.suffix + ".tmp")
     tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     tmp.replace(output)
+
+
+def _write_json_fast(output: Path, data: dict | list) -> None:
+    """Write JSON without the indent/sort-keys/atomic-rename overhead of `_atomic_write`.
+
+    Used for the tens of thousands of small per-maintainer/per-package files `generate
+    site-data` writes -- at that scale, a tmp-file-then-rename plus pretty-printed indentation
+    per file adds meaningful syscall and CPU overhead for files nobody hand-edits or diffs.
+    """
+    output.write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
+
+
+def _copy_if_exists(src: Path, dst: Path, console: Console) -> None:
+    """Copy `src` to `dst` if it exists, else print a warning and continue.
+
+    Used for `generate site-data`'s history-file passthrough: these two files are maintained
+    independently (appended to every few hours by `update.yml`, persisted across runs via the
+    recipe-cache artifact -- see .github/workflows/update.yml -- never committed to git), so
+    they may legitimately be absent (e.g. a fresh checkout before the first `update.yml` run has
+    ever produced them). Missing them shouldn't fail the whole `generate site-data` run -- the
+    frontend's history chart just shows a "failed to load" state until they exist.
+    """
+    if not src.exists():
+        console.print(
+            f"[yellow]Warning:[/] {src} not found, skipping (history chart will 404 until "
+            "update.yml produces it)."
+        )
+        return
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(src, dst)
+    console.print(f"Copied {src} -> {dst}")
 
 
 async def _fetch_one(
@@ -1397,6 +1435,189 @@ def generate_maintainer_coverage(
     console.print(table)
 
     console.print(f"Full results written to {output}")
+
+
+@generate.command("site-data")
+@click.option(
+    "--maintainers-file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path("maintainers.json"),
+    show_default=True,
+    help="Path to the maintainers JSON file (as produced by `generate maintainers`).",
+)
+@click.option(
+    "--maintainer-info-file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path("maintainer-info.json"),
+    show_default=True,
+    help="Path to per-maintainer GitHub user info (as produced by `fetch maintainer-info`).",
+)
+@click.option(
+    "--maintainer-graph-file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path("maintainer-graph.json"),
+    show_default=True,
+    help="Path to the maintainer collaboration graph (as produced by `generate maintainer-graph`).",
+)
+@click.option(
+    "--package-names-file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path("package-names.json"),
+    show_default=True,
+    help="Path to the package names JSON file (as produced by `generate maintainers`).",
+)
+@click.option(
+    "--package-maintainers-file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path("package-maintainers.json"),
+    show_default=True,
+    help="Path to the package -> maintainers JSON file (as produced by "
+    "`generate package-maintainers`).",
+)
+@click.option(
+    "--package-downloads-file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path("package-downloads.json"),
+    show_default=True,
+    help="Path to monthly package download totals (as produced by `fetch package-downloads`).",
+)
+@click.option(
+    "--package-graph-file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path("package-graph.json"),
+    show_default=True,
+    help="Path to the package dependency graph (as produced by `generate package-graph`).",
+)
+@click.option(
+    "--transitive-dependencies-file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path("transitive-dependencies.json"),
+    show_default=True,
+    help="Path to the ranking JSON file (as produced by `generate transitive-dependencies`).",
+)
+@click.option(
+    "--maintainer-history-file",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=Path("maintainer-history.json"),
+    show_default=True,
+    help="Path to the monthly maintainer-count time series (as produced by `generate "
+    "maintainer-history-append`). Copied as-is into --output-dir; skipped with a warning "
+    "(not an error) if it doesn't exist yet.",
+)
+@click.option(
+    "--feedstock-count-history-file",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=Path("feedstock-count-history.json"),
+    show_default=True,
+    help="Path to the monthly feedstock-count time series (as produced by `generate "
+    "feedstock-count-append`). Copied as-is into --output-dir; skipped with a warning "
+    "(not an error) if it doesn't exist yet.",
+)
+@click.option(
+    "--output-dir",
+    "-o",
+    type=click.Path(path_type=Path, file_okay=False),
+    default=Path("web/static/data"),
+    show_default=True,
+    help="Directory to write the site-data JSON files into (mirrors what the frontend expects "
+    "under web/static/data/).",
+)
+def generate_site_data(
+    maintainers_file: Path,
+    maintainer_info_file: Path,
+    maintainer_graph_file: Path,
+    package_names_file: Path,
+    package_maintainers_file: Path,
+    package_downloads_file: Path,
+    package_graph_file: Path,
+    transitive_dependencies_file: Path,
+    maintainer_history_file: Path,
+    feedstock_count_history_file: Path,
+    output_dir: Path,
+) -> None:
+    """Build small, page-ready JSON payloads for the statistics/profile pages.
+
+    Reads every existing root artifact (maintainers, maintainer profiles, both collaboration and
+    dependency graphs, package downloads, transitive dependency rankings) and writes:
+    --output-dir/maintainer-overview.json, --output-dir/package-overview.json,
+    --output-dir/maintainers/index.json plus one --output-dir/maintainers/<login>.json per
+    maintainer with a GitHub profile, and --output-dir/packages/index.json plus one
+    --output-dir/packages/<name>.json per package. Also copies --maintainer-history-file and
+    --feedstock-count-history-file into --output-dir unchanged (they're independently-maintained
+    time series, not derived here -- see `generate maintainer-history-append`/`generate
+    feedstock-count-append`). Meant to run only at deploy time (see
+    .github/workflows/pages.yml) -- nothing it writes is committed to git.
+    """
+    console = Console()
+
+    maintainers_data = json.loads(maintainers_file.read_text(encoding="utf-8"))
+    maintainer_info_data = json.loads(maintainer_info_file.read_text(encoding="utf-8"))
+    maintainer_graph_data = json.loads(maintainer_graph_file.read_text(encoding="utf-8"))
+    package_names_data = json.loads(package_names_file.read_text(encoding="utf-8"))
+    package_maintainers_data = json.loads(package_maintainers_file.read_text(encoding="utf-8"))
+    package_downloads_data = json.loads(package_downloads_file.read_text(encoding="utf-8"))
+    package_graph_data = json.loads(package_graph_file.read_text(encoding="utf-8"))
+    transitive_dependencies_data = json.loads(
+        transitive_dependencies_file.read_text(encoding="utf-8")
+    )["packages"]
+
+    generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    maintainers_dir = output_dir / "maintainers"
+    packages_dir = output_dir / "packages"
+    maintainers_dir.mkdir(parents=True, exist_ok=True)
+    packages_dir.mkdir(parents=True, exist_ok=True)
+
+    console.print("Building maintainer-overview.json and package-overview.json...")
+    maintainer_overview = compute_maintainer_overview(
+        maintainers_data,
+        maintainer_info_data,
+        package_maintainers_data,
+        package_downloads_data,
+        generated_at,
+    )
+    _atomic_write(output_dir / "maintainer-overview.json", maintainer_overview)
+
+    package_overview = compute_package_overview(
+        package_maintainers_data,
+        transitive_dependencies_data,
+        package_downloads_data,
+        generated_at,
+    )
+    _atomic_write(output_dir / "package-overview.json", package_overview)
+
+    console.print(f"Writing {len(maintainer_info_data)} maintainer profile(s)...")
+    maintainer_logins = []
+    for login, profile in build_maintainer_profiles(
+        maintainers_data, maintainer_info_data, maintainer_graph_data, package_names_data
+    ):
+        maintainer_logins.append(login)
+        _write_json_fast(maintainers_dir / f"{login}.json", profile)
+    _atomic_write(maintainers_dir / "index.json", sorted(maintainer_logins))
+
+    console.print(f"Writing {len(package_maintainers_data)} package profile(s)...")
+    package_names_list = []
+    for name, profile in build_package_profiles(
+        package_maintainers_data,
+        maintainer_info_data,
+        package_graph_data,
+        transitive_dependencies_data,
+        package_downloads_data,
+    ):
+        package_names_list.append(name)
+        _write_json_fast(packages_dir / f"{name}.json", profile)
+    _atomic_write(packages_dir / "index.json", sorted(package_names_list))
+
+    _copy_if_exists(maintainer_history_file, output_dir / "maintainer-history.json", console)
+    _copy_if_exists(
+        feedstock_count_history_file, output_dir / "feedstock-count-history.json", console
+    )
+
+    console.print(
+        f"[green]Done.[/] Site data written to {output_dir} "
+        f"({len(maintainer_logins)} maintainers, {len(package_names_list)} packages)"
+    )
 
 
 if __name__ == "__main__":

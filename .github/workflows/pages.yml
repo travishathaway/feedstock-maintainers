@@ -99,12 +99,17 @@ jobs:
         run: |
           tar -xzf "${{ env.ARCHIVE_NAME }}"
 
-      - name: Build website
-        env:
-          VITE_SITE_BASE_URL: https://travishathaway.github.io/feedstock-maintainers/
+      - name: Generate site data
         run: |
           mkdir -p web/static/data/
           cp maintainer-graph.json web/static/data/maintainer-graph.json
+          pixi run generate-site-data
+
+      - name: Build website
+        env:
+          VITE_SITE_BASE_URL: https://travishathaway.github.io/feedstock-maintainers/
+          BASE_PATH: /feedstock-maintainers
+        run: |
           pixi run build-web
 
       - name: Configure Pages

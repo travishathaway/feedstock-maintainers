@@ -65,8 +65,6 @@ jobs:
   update:
     needs: find-source
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -119,23 +117,11 @@ jobs:
         run: |
           pixi run fsm generate maintainer-history-append \
             --maintainers-file maintainers.json \
-            --history-file web/static/data/maintainer-history.json
+            --history-file maintainer-history.json
 
           pixi run fsm generate feedstock-count-append \
             --maintainers-file maintainers.json \
-            --history-file web/static/data/feedstock-count-history.json
-
-      - name: Commit history files if changed
-        run: |
-          if ! git diff --quiet -- web/static/data/maintainer-history.json web/static/data/feedstock-count-history.json; then
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add web/static/data/maintainer-history.json web/static/data/feedstock-count-history.json
-            git commit -m "Update history data for $(date -u +%Y-%m)"
-            git fetch origin main
-            git rebase origin/main || git rebase --abort
-            git push || echo "Push failed, will retry on the next scheduled run"
-          fi
+            --history-file feedstock-count-history.json
 
       - name: Recompile archive
         run: |
@@ -148,7 +134,9 @@ jobs:
             package-graph.json \
             package-names.json \
             package-maintainers.json \
-            package-downloads.json
+            package-downloads.json \
+            maintainer-history.json \
+            feedstock-count-history.json
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

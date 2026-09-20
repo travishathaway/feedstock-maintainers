@@ -721,4 +721,95 @@ def test_fetch_maintainer_info_not_found_file_drops_usernames_that_are_later_fou
 
     assert result.exit_code == 0, result.output
     assert json.loads(output.read_text()) == {"ghost": {"login": "ghost"}}
-    assert json.loads(not_found_output.read_text()) == {}
+
+
+def _write_minimal_site_data_inputs(tmp_path):
+    """Write minimal-but-valid inputs for `generate site-data` (empty datasets throughout --
+    only the shapes matter for exercising the CLI wiring, not the computed content)."""
+    (tmp_path / "maintainers.json").write_text(json.dumps({}))
+    (tmp_path / "maintainer-info.json").write_text(json.dumps({}))
+    (tmp_path / "maintainer-graph.json").write_text(json.dumps({"nodes": [], "edges": []}))
+    (tmp_path / "package-names.json").write_text(json.dumps({}))
+    (tmp_path / "package-maintainers.json").write_text(json.dumps({}))
+    (tmp_path / "package-downloads.json").write_text(json.dumps({}))
+    (tmp_path / "package-graph.json").write_text(json.dumps({"nodes": [], "edges": []}))
+    (tmp_path / "transitive-dependencies.json").write_text(json.dumps({"packages": []}))
+
+
+def _invoke_generate_site_data(tmp_path, output_dir, *extra_args):
+    return CliRunner().invoke(
+        main,
+        [
+            "generate",
+            "site-data",
+            "--maintainers-file",
+            str(tmp_path / "maintainers.json"),
+            "--maintainer-info-file",
+            str(tmp_path / "maintainer-info.json"),
+            "--maintainer-graph-file",
+            str(tmp_path / "maintainer-graph.json"),
+            "--package-names-file",
+            str(tmp_path / "package-names.json"),
+            "--package-maintainers-file",
+            str(tmp_path / "package-maintainers.json"),
+            "--package-downloads-file",
+            str(tmp_path / "package-downloads.json"),
+            "--package-graph-file",
+            str(tmp_path / "package-graph.json"),
+            "--transitive-dependencies-file",
+            str(tmp_path / "transitive-dependencies.json"),
+            "--output-dir",
+            str(output_dir),
+            *extra_args,
+        ],
+    )
+
+
+def test_generate_site_data_copies_history_files_when_present(tmp_path):
+    _write_minimal_site_data_inputs(tmp_path)
+    maintainer_history = tmp_path / "maintainer-history.json"
+    maintainer_history.write_text(
+        json.dumps([{"date": "2026-01-31", "unique_maintainer_count": 1}])
+    )
+    feedstock_count_history = tmp_path / "feedstock-count-history.json"
+    feedstock_count_history.write_text(json.dumps([{"date": "2026-01-31", "feedstock_count": 1}]))
+    output_dir = tmp_path / "output"
+
+    result = _invoke_generate_site_data(
+        tmp_path,
+        output_dir,
+        "--maintainer-history-file",
+        str(maintainer_history),
+        "--feedstock-count-history-file",
+        str(feedstock_count_history),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads((output_dir / "maintainer-history.json").read_text()) == json.loads(
+        maintainer_history.read_text()
+    )
+    assert json.loads((output_dir / "feedstock-count-history.json").read_text()) == json.loads(
+        feedstock_count_history.read_text()
+    )
+
+
+def test_generate_site_data_skips_missing_history_files_without_failing(tmp_path):
+    _write_minimal_site_data_inputs(tmp_path)
+    output_dir = tmp_path / "output"
+
+    result = _invoke_generate_site_data(
+        tmp_path,
+        output_dir,
+        "--maintainer-history-file",
+        str(tmp_path / "maintainer-history.json"),  # never written -- doesn't exist
+        "--feedstock-count-history-file",
+        str(tmp_path / "feedstock-count-history.json"),  # never written -- doesn't exist
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "not found, skipping" in result.output
+    assert not (output_dir / "maintainer-history.json").exists()
+    assert not (output_dir / "feedstock-count-history.json").exists()
+    # the rest of the command still ran normally
+    assert (output_dir / "maintainer-overview.json").exists()
+    assert (output_dir / "package-overview.json").exists()

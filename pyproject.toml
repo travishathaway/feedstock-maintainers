@@ -67,6 +67,7 @@ generate-maintainers = "feedstock-maintainers generate maintainers"
 generate-maintainer-graph = "feedstock-maintainers generate maintainer-graph --output web/static/data/maintainer-graph.json"
 generate-package-maintainers = "feedstock-maintainers generate package-maintainers"
 generate-maintainer-coverage = "feedstock-maintainers generate maintainer-coverage"
+generate-site-data = "feedstock-maintainers generate site-data"
 
 [tool.pixi.feature.dev.tasks]
 test = "pytest"

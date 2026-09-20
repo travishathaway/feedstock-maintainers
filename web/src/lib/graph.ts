@@ -13,6 +13,14 @@ function resolveGraphDataUrl(): string {
 	return `${SITE_BASE_URL.replace(/\/+$/, '')}/data/maintainer-graph.json`;
 }
 
+export function layoutGraph(graph: Graph): void {
+	circular.assign(graph); // seeds x/y -- forceAtlas2 needs a starting layout, it doesn't invent one
+	forceAtlas2.assign(graph, {
+		iterations: graph.order > 1500 ? 100 : 300,
+		settings: forceAtlas2.inferSettings(graph)
+	});
+}
+
 export async function loadMaintainerGraph(url = resolveGraphDataUrl()): Promise<Graph> {
 	const res = await fetch(url);
 	if (!res.ok) {
@@ -22,12 +30,7 @@ export async function loadMaintainerGraph(url = resolveGraphDataUrl()): Promise<
 	}
 
 	const graph = Graph.from(await res.json());
-
-	circular.assign(graph); // seeds x/y -- forceAtlas2 needs a starting layout, it doesn't invent one
-	forceAtlas2.assign(graph, {
-		iterations: graph.order > 1500 ? 100 : 300,
-		settings: forceAtlas2.inferSettings(graph)
-	});
+	layoutGraph(graph);
 
 	return graph;
 }

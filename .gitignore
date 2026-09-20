@@ -86,8 +86,9 @@ env.sh
 # SvelteKit
 .svelte-kit/
 web/build/
-web/static/data/*.json
-# ...except the history files, which update.yml commits to the repo directly (unlike the other
-# web/static/data/*.json files, which only ever exist inside the ephemeral CI artifact).
-!web/static/data/maintainer-history.json
-!web/static/data/feedstock-count-history.json
+# Everything under web/static/data/ (including maintainer-history.json and
+# feedstock-count-history.json) is written by `fsm generate site-data` at deploy time only
+# (see .github/workflows/pages.yml) -- already fully covered by the `data/` rule above, so
+# nothing here is ever committed to git. Those two history files themselves are appended to by
+# `update.yml` and persisted across runs via the recipe-cache artifact (like every other root
+# *.json artifact), not via git.
