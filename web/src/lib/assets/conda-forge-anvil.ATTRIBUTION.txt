@@ -1,0 +1,7 @@
+conda-forge-anvil.png
+Source: https://github.com/conda-forge/conda-forge.github.io (BSD-3-Clause)
+Original artwork adapted from https://thenounproject.com/term/anvil/64539/
+
+conda-forge-favicon.ico
+Source: https://github.com/conda-forge/conda-forge.github.io (BSD-3-Clause)
+static/img/favicon.ico — same file served at https://conda-forge.org/img/favicon.ico

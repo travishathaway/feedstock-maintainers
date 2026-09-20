@@ -1,11 +1,12 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import favicon from '$lib/assets/favicon.svg';
+	import anvilLogo from '$lib/assets/conda-forge-anvil.png';
+	import favicon from '$lib/assets/conda-forge-favicon.ico';
 	import Sidebar from '$lib/components/Sidebar.svelte';
-	import 'bootstrap/dist/css/bootstrap.min.css';
+	import '$lib/styles/bootstrap-theme.scss';
 	import 'bootstrap-icons/font/bootstrap-icons.css';
 	import '@fontsource-variable/inter';
-	import '@fontsource-variable/jetbrains-mono';
+	import '@fontsource-variable/montserrat';
 	import '$lib/styles/global.css';
 
 	let { children } = $props();
@@ -24,24 +25,34 @@
 </svelte:head>
 
 <div class="d-flex flex-column vh-100">
-	<nav class="navbar navbar-expand-lg navbar-dark bg-dark px-3 flex-shrink-0">
-		<a class="navbar-brand font-monospace mb-0 text-truncate" href="/" style="min-width: 0;">
-			conda-forge/feedstock-maintainers
+	<nav class="navbar navbar-expand-lg navbar-light sticky-top bg-white border-bottom px-3 flex-shrink-0">
+		<a class="navbar-brand d-flex align-items-center gap-2 mb-0 text-truncate" href="/" style="min-width: 0;">
+			<img src={anvilLogo} alt="conda-forge" width="auto" height="32" class="me-4" />
+			<span class="text-truncate" style="font-weight: bold; font-size: 1rem; font-family: 'Montserrat Variable', Montserrat, sans-serif">
+			    Feedstock Maintainers
+			</span>
 		</a>
 		<a
-			class="btn btn-outline-light btn-sm ms-auto flex-shrink-0"
+			class="btn btn-outline-secondary btn-sm ms-auto flex-shrink-0"
 			href="https://github.com/travishathaway/feedstock-maintainers"
 			target="_blank"
 			rel="noreferrer"
 		>
 			<i class="bi bi-github"></i><span class="d-none d-sm-inline"> View on GitHub</span>
 		</a>
+		<a
+			class="btn btn-outline-secondary btn-sm ms-2 flex-shrink-0"
+			href="https://conda-forge.org"
+			target="_blank"
+			rel="noreferrer"
+		>
+			<i class="bi bi-box-arrow-up-right"></i><span class="d-none d-sm-inline"> conda-forge.org</span>
+		</a>
 	</nav>
 
-	<div class="container-fluid flex-grow-1" style="min-height: 0;">
+	<div class="container flex-grow-1" style="min-height: 0;">
 		<div class="row h-100">
-			<Sidebar />
-			<main class="col-12 col-md-9 h-100 d-flex flex-column py-3">
+			<main class="col-12 h-100 d-flex flex-column py-3">
 				{@render children()}
 			</main>
 		</div>

@@ -12,6 +12,7 @@ from collections.abc import Callable
 from itertools import combinations
 
 import networkx as nx
+import numpy as np
 
 REPODATA_PACKAGE_KEYS = ("packages", "packages.conda")
 
@@ -225,7 +226,7 @@ def _transitive_dependent_counts(graph: nx.DiGraph) -> dict[str, int]:
     A per-node `nx.ancestors` call is O(V+E) each, so calling it once per node risks O(V*(V+E))
     total work when a handful of hub packages (python, openssl, libgcc-ng, ...) have ancestor sets
     touching a large fraction of the graph -- infeasible at real conda-forge scale (tens of
-    thousands of nodes). Instead this computes every node's ancestor count in one linear pass:
+    thousands of nodes). Instead, this computes every node's ancestor count in one linear pass:
 
     1. Reverse the graph (`R`): `descendants(X)` in `R` is exactly `ancestors(X)` in `graph`.
     2. Condense `R` into its strongly-connected components, guaranteeing a DAG even if the
@@ -299,6 +300,83 @@ def find_transitive_only_dependencies(graph: nx.DiGraph) -> list[dict]:
 
     records.sort(key=lambda record: (-record["transitive_only_dependents"], record["name"]))
     return records
+
+
+def build_package_maintainers(
+    package_names: dict[str, list[str]],
+    maintainers: dict[str, list[str]],
+) -> dict[str, list[str]]:
+    """Join feedstock -> package name(s) with feedstock -> maintainers into package -> maintainers.
+
+    `package_names` (as produced by `generate maintainers --package-names-output`) maps each
+    feedstock to the real, installable conda package name(s) its recipe declares -- possibly more
+    than one for a multi-output feedstock. A feedstock missing from `package_names` (or mapped to
+    an empty list, e.g. its recipe failed to parse) falls back to using the feedstock name itself
+    as the package name, since that already holds for the large majority of feedstocks.
+
+    Two feedstocks that happen to produce the same package name (rare) have their maintainer
+    lists unioned rather than one overwriting the other.
+
+    Returns `{package_name: sorted [maintainer_login, ...]}`, sorted by package name.
+    """
+    by_package: dict[str, set[str]] = defaultdict(set)
+    for feedstock, names in package_names.items():
+        effective_names = names or [feedstock]
+        feedstock_maintainers = maintainers.get(feedstock, [])
+        for package in effective_names:
+            by_package[package].update(feedstock_maintainers)
+
+    return {package: sorted(logins) for package, logins in sorted(by_package.items())}
+
+
+def compute_maintainer_coverage(
+    transitive_dependencies: list[dict],
+    package_maintainers: dict[str, list[str]],
+) -> dict:
+    """Join a `transitive-dependencies.json`-style ranking with `package-maintainers.json`.
+
+    Returns overall maintainer-count distribution stats plus every package annotated with its
+    maintainers and a `risk_score` (`transitive_dependents / (maintainer_count + 1)`, Laplace
+    smoothing to avoid dividing by zero while still ranking zero-maintainer packages highest),
+    sorted descending by `risk_score` (ties broken ascending by name) -- "heavily depended on but
+    with relatively few maintainers" packages sort first.
+
+    Two caveats worth knowing when interpreting the output:
+      - A team handle (e.g. "conda-forge/go") counts as exactly one maintainer, even though it
+        may represent zero or many real people.
+      - `maintainer_count == 0` is ambiguous: it can mean the package is genuinely unmaintained,
+        or that its name doesn't appear in `package_maintainers` at all (a feedstock-name /
+        package-name join miss, or an unparsed recipe).
+    """
+    counts = np.array(
+        [len(package_maintainers.get(record["name"], [])) for record in transitive_dependencies],
+        dtype=float,
+    )
+    stats = {
+        "package_count": len(transitive_dependencies),
+        "packages_with_zero_maintainers": int(np.sum(counts == 0)) if counts.size else 0,
+        "mean_maintainers": float(np.mean(counts)) if counts.size else 0.0,
+        "median_maintainers": float(np.median(counts)) if counts.size else 0.0,
+        "stddev_maintainers": float(np.std(counts)) if counts.size else 0.0,
+    }
+
+    records = []
+    for record in transitive_dependencies:
+        maintainer_logins = package_maintainers.get(record["name"], [])
+        transitive_dependents = record["transitive_dependents"]
+        records.append(
+            {
+                "name": record["name"],
+                "maintainer_count": len(maintainer_logins),
+                "maintainers": maintainer_logins,
+                "direct_dependents": record["direct_dependents"],
+                "transitive_dependents": transitive_dependents,
+                "risk_score": transitive_dependents / (len(maintainer_logins) + 1),
+            }
+        )
+    records.sort(key=lambda record: (-record["risk_score"], record["name"]))
+
+    return {"stats": stats, "packages": records}
 
 
 def package_graph_to_json(graph: nx.DiGraph) -> dict:

@@ -13,5 +13,15 @@ export default defineConfig({
 
 			adapter: adapter({ pages: 'build', assets: 'build', fallback: undefined, strict: true })
 		})
-	]
+	],
+	ssr: {
+		// svelte-chartjs ships its component as raw, uncompiled .svelte source (the standard
+		// approach for Svelte libraries) and expects the consuming app's Svelte plugin to compile
+		// it. Vite's SSR dependency externalization sometimes fails to auto-detect that for
+		// packages installed under pnpm's nested node_modules layout, instead handing the raw
+		// .svelte file straight to Node's module loader -- which doesn't understand that
+		// extension and throws ERR_UNKNOWN_FILE_EXTENSION. Listing it here forces Vite to always
+		// run it through the Svelte compiler during SSR, regardless of that detection.
+		noExternal: ['svelte-chartjs']
+	}
 });

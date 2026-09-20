@@ -35,9 +35,7 @@ _CONTENTS_URL = "https://api.github.com/repos/{owner}/{repo}/contents/{path}"
 _USER_URL = "https://api.github.com/users/{username}"
 _GRAPHQL_URL = "https://api.github.com/graphql"
 _API_VERSION = "2022-11-28"
-_FEEDSTOCK_GITMODULES = (
-    "https://raw.githubusercontent.com/conda-forge/feedstocks/refs/heads/main/.gitmodules"
-)
+_FEEDSTOCK_GITMODULES = "https://raw.githubusercontent.com/{owner}/{repo}/{ref}/.gitmodules"
 _OWNER = "conda-forge"
 _REPO = "feedstocks"
 _BRANCH = "main"
@@ -262,9 +260,14 @@ async def fetch_user_info(
         raise FetchError(f"non-JSON response from Users API for {url}") from exc
 
 
-def fetch_gitmodules() -> str:
-    """Return the .gitmodules file as a string."""
-    url = _FEEDSTOCK_GITMODULES
+def fetch_gitmodules(ref: str = "refs/heads/main") -> str:
+    """Return the .gitmodules file as a string, at `ref` (a branch name, tag, or commit SHA).
+
+    Defaults to the live main branch. Pass a specific commit SHA to read the feedstock roster as
+    it existed at that point in the mono-repo's history (used by `maintainer_history` to resolve
+    owner/repo for feedstocks at a historical snapshot).
+    """
+    url = _FEEDSTOCK_GITMODULES.format(owner=_OWNER, repo=_REPO, ref=ref)
     response = httpx.get(url, follow_redirects=True)
     response.raise_for_status()
 

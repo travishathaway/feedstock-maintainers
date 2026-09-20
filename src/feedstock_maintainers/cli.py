@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import httpx
@@ -11,15 +12,18 @@ import rich_click as click
 from rich.console import Console
 from rich.progress import (
     BarColumn,
+    DownloadColumn,
     MofNCompleteColumn,
     Progress,
     SpinnerColumn,
     TextColumn,
     TimeElapsedColumn,
     TimeRemainingColumn,
+    TransferSpeedColumn,
 )
 from rich.table import Table
 
+from . import feedstock_count_history as fch
 from .cache import RecipeCache
 from .github import (
     Cooldown,
@@ -34,16 +38,25 @@ from .gitmodules import FeedstockSource, parse_gitmodules
 from .graph_data import (
     build_graph,
     build_package_graph,
+    build_package_maintainers,
+    compute_maintainer_coverage,
     find_transitive_only_dependencies,
     package_graph_to_json,
 )
-from .recipe import ParseError, extract_maintainers_from_text
+from .maintainer_history import append_current_point, run_backfill
+from .package_downloads import (
+    PackageDownloadsFetchError,
+    fetch_monthly_downloads,
+    trailing_months,
+)
+from .recipe import ParseError, parse_recipe
+from .repodata import RepodataFetchError, fetch_all_repodata
 
 _DEFAULT_RATE_LIMIT_NO_TOKEN = 0.5
 _DEFAULT_RATE_LIMIT_WITH_TOKEN = 1.2
 
 
-def _atomic_write(output: Path, data: dict) -> None:
+def _atomic_write(output: Path, data: dict | list) -> None:
     tmp = output.with_suffix(output.suffix + ".tmp")
     tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     tmp.replace(output)
@@ -195,6 +208,62 @@ async def _run_fetch_maintainer_info(
         _atomic_write(not_found_output, not_found)
 
 
+async def _run_fetch_repodata(
+    platforms: list[str], console: Console, timeout: float
+) -> dict[str, dict]:
+    with Progress(
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        DownloadColumn(),
+        TransferSpeedColumn(),
+        TimeRemainingColumn(),
+        console=console,
+    ) as progress:
+        tasks = {
+            platform: progress.add_task(f"Fetching {platform} repodata.json.zst", total=None)
+            for platform in platforms
+        }
+
+        def on_progress(platform: str, downloaded: int, total: int | None) -> None:
+            progress.update(tasks[platform], completed=downloaded, total=total)
+
+        return await fetch_all_repodata(platforms, timeout, on_progress=on_progress)
+
+
+async def _run_fetch_package_downloads(
+    months: list[date],
+    console: Console,
+    timeout: float,
+    data_source: str,
+    cache_dir: Path | None,
+    force: bool,
+) -> dict[str, dict[str, int]]:
+    with Progress(
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        DownloadColumn(),
+        TransferSpeedColumn(),
+        TimeRemainingColumn(),
+        console=console,
+    ) as progress:
+        tasks = {
+            month: progress.add_task(f"Fetching {month.year}-{month.month:02d}.parquet", total=None)
+            for month in months
+        }
+
+        def on_progress(month: date, downloaded: int, total: int | None) -> None:
+            progress.update(tasks[month], completed=downloaded, total=total)
+
+        return await fetch_monthly_downloads(
+            months,
+            timeout,
+            data_source=data_source,
+            cache_dir=cache_dir,
+            force=force,
+            on_progress=on_progress,
+        )
+
+
 @click.group()
 def main() -> None:
     """Track conda-forge feedstock maintainers: fetch recipes, then generate artifacts from them."""
@@ -202,7 +271,8 @@ def main() -> None:
 
 @main.group()
 def fetch() -> None:
-    """Fetch data from GitHub: feedstock recipes, or maintainer profile info."""
+    """Fetch data from GitHub (feedstock recipes, maintainer profile info) or Anaconda Package
+    Data (package download stats)."""
 
 
 @fetch.command("feedstocks")
@@ -363,7 +433,13 @@ def fetch_feedstocks(
 
 
 @fetch.command("maintainer-info")
-@click.argument("maintainers_file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option(
+    "--maintainers-file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path("maintainers.json"),
+    show_default=True,
+    help="Path to the maintainers JSON file (as produced by `generate maintainers`).",
+)
 @click.option(
     "--output",
     "-o",
@@ -445,7 +521,7 @@ def fetch_maintainer_info(
 ) -> None:
     """Fetch each maintainer's GitHub user info and write it to --output.
 
-    Reads the unique set of GitHub usernames out of MAINTAINERS_FILE (as produced by
+    Reads the unique set of GitHub usernames out of --maintainers-file (as produced by
     `generate maintainers`), fetches each one's public profile from the GitHub Users API, and
     writes {username: <user info>} to --output. Entries containing "/" are team handles (e.g.
     "conda-forge/go"), not individual users, and are skipped. Usernames that couldn't be
@@ -526,9 +602,303 @@ def fetch_maintainer_info(
             console.print(f"  ... and {len(errors) - 20} more")
 
 
+@fetch.command("maintainer-history-backfill")
+@click.option(
+    "--start-date",
+    type=click.DateTime(formats=["%Y-%m-%d"]),
+    default="2014-01-01",
+    show_default=True,
+    help="Earliest month to backfill. Months before conda-forge/feedstocks' history begins are "
+    "detected automatically and skipped, so this is a conservative floor, not a precise date.",
+)
+@click.option(
+    "--end-date",
+    type=click.DateTime(formats=["%Y-%m-%d"]),
+    default=None,
+    help="Latest month to backfill. Defaults to today.",
+)
+@click.option(
+    "--state-file",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=Path("maintainer_history_state.json"),
+    show_default=True,
+    help="Checkpoint file: the last snapshot built plus the full per-feedstock maintainer state "
+    "needed to build the next one. Not meant to be committed -- delete it to start over.",
+)
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=Path("maintainer-history.json"),
+    show_default=True,
+    help="Path to write the monthly unique-maintainer-count time series.",
+)
+@click.option(
+    "--concurrency",
+    type=int,
+    default=25,
+    show_default=True,
+    help="Number of concurrent GitHub requests per month's recipe fetches.",
+)
+@click.option(
+    "--timeout",
+    type=float,
+    default=15.0,
+    show_default=True,
+    help="Per-request timeout in seconds.",
+)
+@click.option(
+    "--retries",
+    type=int,
+    default=3,
+    show_default=True,
+    help="Retries for transient errors (403/429/5xx/network) per request.",
+)
+@click.option(
+    "--token",
+    envvar="GITHUB_TOKEN",
+    default=None,
+    help="GitHub token. Strongly recommended for this command: it makes many more requests than "
+    "a normal `fetch feedstocks` run. Prefer setting the GITHUB_TOKEN environment variable over "
+    "this flag so the token doesn't end up in your shell history.",
+)
+@click.option(
+    "--rate-limit",
+    "requests_per_second",
+    type=float,
+    default=5.0,
+    show_default=True,
+    help="Steady-state cap on requests/second for recipe content fetches. Pass 0 to disable "
+    "pacing entirely.",
+)
+def fetch_maintainer_history_backfill(
+    start_date: datetime,
+    end_date: datetime | None,
+    state_file: Path,
+    output: Path,
+    concurrency: int,
+    timeout: float,
+    retries: int,
+    token: str | None,
+    requests_per_second: float,
+) -> None:
+    """Backfill a monthly time series of unique feedstock maintainer counts.
+
+    This is a one-off, potentially long-running command meant to be run manually (never from the
+    3-hour update workflow): it walks conda-forge/feedstocks' history one month at a time,
+    re-fetching recipe content only for feedstocks whose submodule pointer changed since the
+    previous month and carrying everything else forward, but even so can still make several
+    hundred thousand requests across the full history. It's resumable -- re-run the same command
+    (same --state-file) to continue after an interruption. Once built, keep --output current via
+    `generate maintainer-history-append` on each `update.yml` run instead of re-running this.
+    """
+    console = Console()
+    end = (end_date or datetime.now(timezone.utc)).date()
+    start = start_date.date()
+
+    console.print(f"Backfilling monthly snapshots from {start} through {end}")
+    if state_file.exists():
+        console.print(f"Resuming from checkpoint {state_file}")
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        TimeElapsedColumn(),
+        console=console,
+        transient=True,
+    ) as progress:
+        task = progress.add_task("Backfilling...", total=None)
+        run_backfill(
+            start,
+            end,
+            state_file,
+            output,
+            token=token,
+            concurrency=concurrency,
+            requests_per_second=requests_per_second,
+            retries=retries,
+            timeout=timeout,
+            on_step=lambda description: progress.update(task, description=description + "..."),
+        )
+
+    console.print(f"[green]Done.[/] Monthly history written to {output}")
+
+
+@fetch.command("feedstock-count-history-backfill")
+@click.option(
+    "--start-date",
+    type=click.DateTime(formats=["%Y-%m-%d"]),
+    default="2014-01-01",
+    show_default=True,
+    help="Earliest month to backfill. Months before conda-forge/feedstocks' history begins are "
+    "detected automatically and skipped, so this is a conservative floor, not a precise date.",
+)
+@click.option(
+    "--end-date",
+    type=click.DateTime(formats=["%Y-%m-%d"]),
+    default=None,
+    help="Latest month to backfill. Defaults to today.",
+)
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=Path("feedstock-count-history.json"),
+    show_default=True,
+    help="Path to the monthly feedstock-count time series to write/resume.",
+)
+@click.option(
+    "--retries",
+    type=int,
+    default=3,
+    show_default=True,
+    help="Retries for transient errors (403/429/5xx/network) per request.",
+)
+@click.option(
+    "--token",
+    envvar="GITHUB_TOKEN",
+    default=None,
+    help="GitHub token. Not required -- this command makes only two requests per month -- but "
+    "raises the rate limit if you're running it right after other fetches. Prefer setting the "
+    "GITHUB_TOKEN environment variable over this flag so the token doesn't end up in your shell "
+    "history.",
+)
+def fetch_feedstock_count_history_backfill(
+    start_date: datetime,
+    end_date: datetime | None,
+    output: Path,
+    retries: int,
+    token: str | None,
+) -> None:
+    """Backfill a monthly time series of total feedstock counts.
+
+    Much cheaper than `fetch maintainer-history-backfill`: no recipe content is ever fetched,
+    just two GitHub API requests per month (resolve the commit as of that month, then count its
+    submodule tree entries). Resumable -- re-run with the same --output to continue after an
+    interruption or to add new months later.
+    """
+    console = Console()
+    end = (end_date or datetime.now(timezone.utc)).date()
+    start = start_date.date()
+
+    console.print(f"Backfilling monthly feedstock counts from {start} through {end}")
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        TimeElapsedColumn(),
+        console=console,
+        transient=True,
+    ) as progress:
+        task = progress.add_task("Backfilling...", total=None)
+        fch.run_backfill(
+            start,
+            end,
+            output,
+            token=token,
+            retries=retries,
+            on_step=lambda description: progress.update(task, description=description + "..."),
+        )
+
+    console.print(f"[green]Done.[/] Monthly feedstock counts written to {output}")
+
+
+@fetch.command("package-downloads")
+@click.option(
+    "--months",
+    type=click.IntRange(min=1),
+    default=13,
+    show_default=True,
+    help="Number of trailing calendar months to fetch, ending with the current (partial) month. "
+    "E.g. 13 covers roughly the last year plus the current in-progress month.",
+)
+@click.option(
+    "--data-source",
+    default="conda-forge",
+    show_default=True,
+    help="Anaconda Package Data 'data_source' (channel) to filter to.",
+)
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=Path("package-downloads.json"),
+    show_default=True,
+    help='Path to write {package_name: {"YYYY-MM": total_downloads}}.',
+)
+@click.option(
+    "--cache-dir",
+    type=click.Path(path_type=Path, file_okay=False),
+    default=None,
+    help="Directory to cache each month's raw downloaded parquet file in, to avoid re-fetching "
+    "from S3 on repeated runs. Off by default.",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Ignore --cache-dir entirely and re-download every month fresh from S3.",
+)
+@click.option(
+    "--timeout",
+    type=float,
+    default=60.0,
+    show_default=True,
+    help="Per-month download timeout in seconds (monthly parquet files run ~10-15MB).",
+)
+def fetch_package_downloads(
+    months: int,
+    data_source: str,
+    output: Path,
+    cache_dir: Path | None,
+    force: bool,
+    timeout: float,
+) -> None:
+    """Fetch monthly conda-forge package download totals from Anaconda Package Data.
+
+    Downloads the last --months pre-aggregated monthly parquet files (one per month) straight
+    from the public anaconda-package-data S3 bucket
+    (https://anaconda-package-data.s3.amazonaws.com/conda/monthly/...) -- no AWS credentials
+    needed. Each month is filtered to --data-source and grouped by package name, summing across
+    package version/platform/python build variants, then written to --output as
+    {package_name: {"YYYY-MM": total_downloads}}.
+
+    The most recent month in the window is still accumulating downloads throughout the month, so
+    treat its total as provisional. A month with no parquet file yet published (e.g. one before
+    the dataset's coverage begins) is silently skipped, not an error.
+    """
+    console = Console()
+    today = datetime.now(timezone.utc).date()
+    target_months = trailing_months(today, months)
+
+    console.print(
+        f"Fetching {len(target_months)} month(s) of {data_source!r} downloads "
+        f"({target_months[0].isoformat()[:7]} through {target_months[-1].isoformat()[:7]})"
+    )
+
+    try:
+        result = asyncio.run(
+            _run_fetch_package_downloads(
+                target_months, console, timeout, data_source, cache_dir, force
+            )
+        )
+    except PackageDownloadsFetchError as exc:
+        raise click.ClickException(str(exc)) from None
+
+    _atomic_write(output, result)
+
+    months_with_data = {month_key for per_pkg in result.values() for month_key in per_pkg}
+    missing = len(target_months) - len(months_with_data)
+
+    console.print(f"[green]Done.[/] {len(result)} packages written to {output}")
+    if missing:
+        console.print(f"[yellow]{missing}[/] month(s) had no data published yet (skipped)")
+
+
 @main.group()
 def generate() -> None:
-    """Build artifacts from the local recipe cache. No network access."""
+    """Build artifacts from the local recipe cache. No network access, except `package-graph`
+    and `transitive-dependencies`, which download repodata directly from conda-forge."""
 
 
 @generate.command("maintainers")
@@ -547,24 +917,42 @@ def generate() -> None:
     show_default=True,
     help="Path to write the maintainers JSON file.",
 )
-def generate_maintainers(cache_dir: Path, output: Path) -> None:
-    """Read cached recipe files and write each feedstock's extra.recipe-maintainers to --output."""
+@click.option(
+    "--package-names-output",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=Path("package-names.json"),
+    show_default=True,
+    help="Path to write each feedstock's real, installable conda package name(s).",
+)
+def generate_maintainers(cache_dir: Path, output: Path, package_names_output: Path) -> None:
+    """Read cached recipe files and write each feedstock's maintainers and package name(s).
+
+    Writes --output: {feedstock: [extra.recipe-maintainers, ...]}. Also writes
+    --package-names-output: {feedstock: [package_name, ...]} -- the real, installable conda
+    package name(s) declared by the recipe (more than one for a multi-output feedstock) -- for
+    use by `generate package-maintainers`.
+    """
     console = Console()
     cache = RecipeCache(cache_dir)
 
-    results: dict[str, list] = {}
+    maintainers: dict[str, list] = {}
+    package_names: dict[str, list[str]] = {}
     errors: list[tuple[str, str]] = []
     for entry in cache.found_entries():
         text = cache.read_text(entry)
         assert entry.filename is not None
         try:
-            results[entry.name] = extract_maintainers_from_text(entry.filename, text)
+            maintainers[entry.name], package_names[entry.name] = parse_recipe(entry.filename, text)
         except ParseError as exc:
             errors.append((entry.name, str(exc)))
 
-    _atomic_write(output, results)
+    _atomic_write(output, maintainers)
+    _atomic_write(package_names_output, package_names)
 
-    console.print(f"[green]Done.[/] {len(results)} feedstocks recorded in {output}")
+    console.print(
+        f"[green]Done.[/] {len(maintainers)} feedstocks recorded in {output} and "
+        f"{package_names_output}"
+    )
     not_found = cache.counts()["not_found"]
     if not_found:
         console.print(f"[yellow]{not_found}[/] cached feedstocks had no recipe file")
@@ -574,6 +962,104 @@ def generate_maintainers(cache_dir: Path, output: Path) -> None:
             console.print(f"  - {name}: {message}")
         if len(errors) > 20:
             console.print(f"  ... and {len(errors) - 20} more")
+
+
+@generate.command("maintainer-history-append")
+@click.option(
+    "--maintainers-file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path("maintainers.json"),
+    show_default=True,
+    help="Path to the maintainers JSON file (as produced by `generate maintainers`).",
+)
+@click.option(
+    "--history-file",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=Path("maintainer-history.json"),
+    show_default=True,
+    help="Path to the monthly time series to append/update (as produced by `fetch "
+    "maintainer-history-backfill`). Created if it doesn't exist yet.",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Always append a new entry, even if the current month already has one (default: "
+    "replace the current month's entry in place, so runs every few hours don't pile up "
+    "duplicate points).",
+)
+def generate_maintainer_history_append(
+    maintainers_file: Path, history_file: Path, force: bool
+) -> None:
+    """Append (or update) today's unique-maintainer count in --history-file.
+
+    Reads the unique GitHub logins out of --maintainers-file -- data the 3-hour update workflow
+    already regenerates from a full recipe cache scan every run -- and records the count as
+    today's data point, replacing any existing entry for the current calendar month unless
+    --force is given.
+    """
+    console = Console()
+
+    maintainers_data = json.loads(maintainers_file.read_text(encoding="utf-8"))
+    history = json.loads(history_file.read_text(encoding="utf-8")) if history_file.exists() else []
+
+    updated = append_current_point(maintainers_data, history, date.today(), force=force)
+    history_file.parent.mkdir(parents=True, exist_ok=True)
+    _atomic_write(history_file, updated)
+
+    console.print(
+        f"[green]Done.[/] {updated[-1]['unique_maintainer_count']} unique maintainers recorded "
+        f"for {updated[-1]['date']} in {history_file}"
+    )
+
+
+@generate.command("feedstock-count-append")
+@click.option(
+    "--maintainers-file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path("maintainers.json"),
+    show_default=True,
+    help="Path to the maintainers JSON file (as produced by `generate maintainers`) -- its key "
+    "count is today's feedstock count, since it has one entry per feedstock.",
+)
+@click.option(
+    "--history-file",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=Path("feedstock-count-history.json"),
+    show_default=True,
+    help="Path to the monthly time series to append/update (as produced by `fetch "
+    "feedstock-count-history-backfill`). Created if it doesn't exist yet.",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Always append a new entry, even if the current month already has one (default: "
+    "replace the current month's entry in place, so runs every few hours don't pile up "
+    "duplicate points).",
+)
+def generate_feedstock_count_append(
+    maintainers_file: Path, history_file: Path, force: bool
+) -> None:
+    """Append (or update) today's feedstock count in --history-file.
+
+    Reads the feedstock count out of --maintainers-file -- data the 3-hour update workflow
+    already regenerates from a full recipe cache scan every run -- and records it as today's data
+    point, replacing any existing entry for the current calendar month unless --force is given.
+    """
+    console = Console()
+
+    maintainers_data = json.loads(maintainers_file.read_text(encoding="utf-8"))
+    history = json.loads(history_file.read_text(encoding="utf-8")) if history_file.exists() else []
+
+    updated = fch.append_current_point(len(maintainers_data), history, date.today(), force=force)
+    history_file.parent.mkdir(parents=True, exist_ok=True)
+    _atomic_write(history_file, updated)
+
+    console.print(
+        f"[green]Done.[/] {updated[-1]['feedstock_count']} feedstocks recorded for "
+        f"{updated[-1]['date']} in {history_file}"
+    )
 
 
 @generate.command("maintainer-graph")
@@ -635,11 +1121,56 @@ def generate_maintainer_graph_data(
     )
 
 
-@generate.command("package-graph")
-@click.argument(
-    "repodata",
-    nargs=-1,
+@generate.command("package-maintainers")
+@click.option(
+    "--package-names-file",
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path("package-names.json"),
+    show_default=True,
+    help="Path to the package names JSON file (as produced by `generate maintainers`).",
+)
+@click.option(
+    "--maintainers-file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path("maintainers.json"),
+    show_default=True,
+    help="Path to the maintainers JSON file (as produced by `generate maintainers`).",
+)
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=Path("package-maintainers.json"),
+    show_default=True,
+    help="Path to write the package -> maintainers JSON file.",
+)
+def generate_package_maintainers(
+    package_names_file: Path, maintainers_file: Path, output: Path
+) -> None:
+    """Join --package-names-file with --maintainers-file into a package -> maintainers lookup.
+
+    Answers "who maintains package X" directly: {package_name: [maintainer_login, ...]}.
+    """
+    console = Console()
+
+    package_names_data = json.loads(package_names_file.read_text(encoding="utf-8"))
+    maintainers_data = json.loads(maintainers_file.read_text(encoding="utf-8"))
+
+    result = build_package_maintainers(package_names_data, maintainers_data)
+    _atomic_write(output, result)
+
+    console.print(f"[green]Done.[/] {len(result)} packages recorded in {output}")
+
+
+@generate.command("package-graph")
+@click.option(
+    "--platform",
+    "-p",
+    "platforms",
+    multiple=True,
+    required=True,
+    help="conda-forge platform subdir to include (e.g. noarch, linux-64, linux-aarch64, "
+    "osx-arm64). Repeat for multiple platforms.",
 )
 @click.option(
     "--output",
@@ -649,17 +1180,29 @@ def generate_maintainer_graph_data(
     show_default=True,
     help="Path to write the graphology-format packages graph JSON.",
 )
-def generate_package_graph_data(repodata: list[Path], output: Path) -> None:
-    """Build a package dependency graph from one or more REPODATA (repodata.json) files.
+@click.option(
+    "--timeout",
+    type=float,
+    default=300.0,
+    show_default=True,
+    help="Per-platform repodata download timeout in seconds.",
+)
+def generate_package_graph_data(platforms: tuple[str, ...], output: Path, timeout: float) -> None:
+    """Build a package dependency graph from conda-forge's repodata for one or more --platform.
 
-    Nodes are package names (collapsed across all versions/builds); an edge points from a
-    package to each of its direct dependencies, weighted by how many distinct (version, build)
-    artifacts declared that dependency. Both the legacy `packages` and newer `packages.conda`
-    keys in each repodata file are read.
+    Downloads repodata.json.zst concurrently, straight from
+    https://conda.anaconda.org/conda-forge/<platform>/repodata.json.zst, for each --platform --
+    no local repodata file needed. Nodes are package names (collapsed across all
+    versions/builds); an edge points from a package to each of its direct dependencies, weighted
+    by how many distinct (version, build) artifacts declared that dependency. Both the legacy
+    `packages` and newer `packages.conda` keys in each repodata file are read.
     """
     console = Console()
 
-    repodata_jsons = [json.loads(r.read_text(encoding="utf-8")) for r in repodata]
+    try:
+        repodata_by_platform = asyncio.run(_run_fetch_repodata(list(platforms), console, timeout))
+    except RepodataFetchError as exc:
+        raise click.ClickException(str(exc)) from None
 
     with Progress(
         SpinnerColumn(),
@@ -670,7 +1213,7 @@ def generate_package_graph_data(repodata: list[Path], output: Path) -> None:
     ) as progress:
         task = progress.add_task("Building package dependency graph...", total=None)
         graph = build_package_graph(
-            repodata_jsons,
+            list(repodata_by_platform.values()),
             on_step=lambda description: progress.update(task, description=description + "..."),
         )
 
@@ -683,10 +1226,14 @@ def generate_package_graph_data(repodata: list[Path], output: Path) -> None:
 
 
 @generate.command("transitive-dependencies")
-@click.argument(
-    "repodata",
-    nargs=-1,
-    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+@click.option(
+    "--platform",
+    "-p",
+    "platforms",
+    multiple=True,
+    required=True,
+    help="conda-forge platform subdir to include (e.g. noarch, linux-64, linux-aarch64, "
+    "osx-arm64). Repeat for multiple platforms.",
 )
 @click.option(
     "--output",
@@ -704,17 +1251,32 @@ def generate_package_graph_data(repodata: list[Path], output: Path) -> None:
     show_default=True,
     help="Number of rows to print for each ranking.",
 )
-def generate_transitive_dependencies(repodata: list[Path], output: Path, top: int) -> None:
-    """Rank packages by how many other packages depend on them only transitively, from one or
-    more REPODATA (repodata.json) files.
+@click.option(
+    "--timeout",
+    type=float,
+    default=300.0,
+    show_default=True,
+    help="Per-platform repodata download timeout in seconds.",
+)
+def generate_transitive_dependencies(
+    platforms: tuple[str, ...], output: Path, top: int, timeout: float
+) -> None:
+    """Rank packages by how many other packages depend on them only transitively, from
+    conda-forge's repodata for one or more --platform.
 
-    Builds the same package dependency graph as `generate package-graph`, then for every package
-    reports how many packages depend on it only through a chain of dependencies and never as a
-    direct, declared dependency -- the ecosystem's "hidden" load-bearing packages.
+    Downloads repodata.json.zst concurrently, straight from
+    https://conda.anaconda.org/conda-forge/<platform>/repodata.json.zst, for each --platform --
+    no local repodata file needed. Builds the same package dependency graph as `generate
+    package-graph`, then for every package reports how many packages depend on it only through a
+    chain of dependencies and never as a direct, declared dependency -- the ecosystem's "hidden"
+    load-bearing packages.
     """
     console = Console()
 
-    repodata_jsons = [json.loads(r.read_text(encoding="utf-8")) for r in repodata]
+    try:
+        repodata_by_platform = asyncio.run(_run_fetch_repodata(list(platforms), console, timeout))
+    except RepodataFetchError as exc:
+        raise click.ClickException(str(exc)) from None
 
     with Progress(
         SpinnerColumn(),
@@ -725,7 +1287,7 @@ def generate_transitive_dependencies(repodata: list[Path], output: Path, top: in
     ) as progress:
         task = progress.add_task("Building package dependency graph...", total=None)
         graph = build_package_graph(
-            repodata_jsons,
+            list(repodata_by_platform.values()),
             on_step=lambda description: progress.update(task, description=description + "..."),
         )
         progress.update(task, description="Ranking transitive-only dependencies...")
@@ -757,6 +1319,84 @@ def generate_transitive_dependencies(repodata: list[Path], output: Path, top: in
     console.print(
         f"[green]Done.[/] {len(records)} packages ranked, full results written to {output}"
     )
+
+
+@generate.command("maintainer-coverage")
+@click.option(
+    "--transitive-dependencies-file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path("transitive-dependencies.json"),
+    show_default=True,
+    help="Path to the ranking JSON file (as produced by `generate transitive-dependencies`).",
+)
+@click.option(
+    "--package-maintainers-file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path("package-maintainers.json"),
+    show_default=True,
+    help="Path to the package -> maintainers JSON file (as produced by "
+    "`generate package-maintainers`).",
+)
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=Path("maintainer-coverage.json"),
+    show_default=True,
+    help="Path to write the full stats + ranked list as JSON.",
+)
+@click.option(
+    "--top",
+    "-n",
+    type=int,
+    default=25,
+    show_default=True,
+    help="Number of rows to print in the ranking table.",
+)
+def generate_maintainer_coverage(
+    transitive_dependencies_file: Path,
+    package_maintainers_file: Path,
+    output: Path,
+    top: int,
+) -> None:
+    """Rank packages by dependents-per-maintainer and report overall maintainer-count stats.
+
+    Joins --transitive-dependencies-file with --package-maintainers-file by package name (no
+    repodata needed) to answer questions like "what's the mean/median/stddev number of
+    maintainers per package?" and "what packages are heavily depended on but have relatively few
+    maintainers?".
+    """
+    console = Console()
+
+    transitive_data = json.loads(transitive_dependencies_file.read_text(encoding="utf-8"))
+    package_maintainers_data = json.loads(package_maintainers_file.read_text(encoding="utf-8"))
+
+    result = compute_maintainer_coverage(transitive_data["packages"], package_maintainers_data)
+    _atomic_write(output, result)
+
+    stats = result["stats"]
+    console.print(
+        f"[green]Done.[/] {stats['package_count']} packages: "
+        f"mean={stats['mean_maintainers']:.2f} median={stats['median_maintainers']:.2f} "
+        f"stddev={stats['stddev_maintainers']:.2f}, "
+        f"{stats['packages_with_zero_maintainers']} with zero maintainers"
+    )
+
+    table = Table(title=f"Top {top} by risk score (transitive dependents per maintainer)")
+    table.add_column("Package")
+    table.add_column("Maintainers", justify="right")
+    table.add_column("Transitive dependents", justify="right")
+    table.add_column("Risk score", justify="right")
+    for record in result["packages"][:top]:
+        table.add_row(
+            record["name"],
+            str(record["maintainer_count"]),
+            str(record["transitive_dependents"]),
+            f"{record['risk_score']:.1f}",
+        )
+    console.print(table)
+
+    console.print(f"Full results written to {output}")
 
 
 if __name__ == "__main__":

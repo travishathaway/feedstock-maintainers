@@ -125,7 +125,7 @@
 
 <!-- Desktop sidebar -->
 <div class="col-md-3 d-none d-md-block border-end h-100 overflow-auto py-3">
-	<h6 class="text-uppercase text-secondary fw-semibold small mb-3 d-flex align-items-center gap-2">
+	<h6 class="text-uppercase text-body-secondary fw-semibold small mb-3 d-flex align-items-center gap-2">
 		<i class="bi bi-funnel"></i> Filters
 	</h6>
 	{@render filterFields((el) => (desktopSelectEl = el), 'desktop')}

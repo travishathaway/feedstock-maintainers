@@ -75,7 +75,11 @@ dist/
 .mcp.json
 
 maintainers.json
+maintainer-history.json
+maintainer_history_state.json
+feedstock-count-history.json
 recipe_cache/
+package_downloads_cache/
 
 env.sh
 
@@ -83,3 +87,7 @@ env.sh
 .svelte-kit/
 web/build/
 web/static/data/*.json
+# ...except the history files, which update.yml commits to the repo directly (unlike the other
+# web/static/data/*.json files, which only ever exist inside the ephemeral CI artifact).
+!web/static/data/maintainer-history.json
+!web/static/data/feedstock-count-history.json

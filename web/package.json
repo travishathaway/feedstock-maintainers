@@ -15,6 +15,7 @@
 		"@sveltejs/adapter-static": "^3.0.6",
 		"@sveltejs/kit": "^2.63.0",
 		"@sveltejs/vite-plugin-svelte": "^7.1.2",
+		"sass": "^1.104.1",
 		"svelte": "^5.56.1",
 		"svelte-check": "^4.6.0",
 		"typescript": "^6.0.3",
@@ -22,13 +23,15 @@
 	},
 	"dependencies": {
 		"@fontsource-variable/inter": "^5.3.0",
-		"@fontsource-variable/jetbrains-mono": "^5.3.0",
+		"@fontsource-variable/montserrat": "^5.3.0",
 		"bootstrap": "^5.3.8",
 		"bootstrap-icons": "^1.13.1",
+		"chart.js": "^4.5.1",
 		"graphology": "^0.26.0",
 		"graphology-layout": "^0.6.1",
 		"graphology-layout-forceatlas2": "^0.10.1",
 		"sigma": "^3.0.2",
+		"svelte-chartjs": "^4.0.1",
 		"tom-select": "^2.6.2"
 	}
 }

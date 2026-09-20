@@ -1,0 +1,39 @@
+// Fonts (loaded separately via @fontsource-variable imports in +layout.svelte)
+$font-family-sans-serif: 'Inter Variable', Inter, system-ui, -apple-system, sans-serif;
+$headings-font-family: 'Montserrat Variable', Montserrat, sans-serif;
+$headings-font-weight: 600;
+
+// conda-forge.org palette (light mode)
+// Using the "darker" published shade (not the base #008478) for $primary: the
+// base teal reads as washed-out for body text/links/form controls at normal
+// text sizes against a white background, so we use the next shade down for
+// better contrast while staying within conda-forge's own documented palette.
+$primary: #00695c;
+// conda-forge.org's published "Secondary" (#ebedf0) is a pale surface/background
+// tone, not an accessible foreground color. Bootstrap uses $secondary directly
+// as *foreground* text/border color in several components — .btn-outline-secondary
+// (button text + border), .text-secondary, disabled states, focus rings, etc. —
+// so using #ebedf0 there made those elements nearly invisible on a white page
+// background (fails WCAG AA). Use the same darker gray as $body-secondary-color
+// below instead; Bootstrap still auto-derives a light, neutral tint from it for
+// subtle backgrounds/borders (see $secondary-bg-subtle/$secondary-border-subtle),
+// which lands close to conda-forge's original pale #ebedf0 anyway.
+$secondary: #495057;
+$success: #388e3c;
+$info: #1976d2;
+$warning: #ef6c00;
+// $danger: left as Bootstrap default (#dc3545) — no published conda-forge value
+
+// Optional supporting shades reused for hover/active states where useful
+$primary-text-emphasis: #004d40;
+
+// Bootstrap's default $body-secondary-color (rgba($body-color, .75)) backs
+// the `.text-body-secondary` utility used throughout this app for muted text
+// (section headers, subtitle, form labels). The default 75%-opacity gray
+// fails WCAG AA contrast against white; use a solid, darker gray instead.
+// #495057 on #fff yields a ~8.2:1 contrast ratio (AA requires 4.5:1 for
+// normal text; this also clears the stricter 7:1 AAA threshold). Kept in
+// sync with $secondary above for a single consistent "muted gray" tone.
+$body-secondary-color: #495057;
+
+@import 'bootstrap/scss/bootstrap';

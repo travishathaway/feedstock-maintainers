@@ -21,8 +21,8 @@
 	let visibleNodes: Set<string> | null = null;
 
 	const FADED_EDGE_COLOR = '#f0f0f0';
-	const SELECTED_COLOR = '#e67e22';
-	const DEFAULT_NODE_COLOR = '#5B8DEF';
+	const SELECTED_COLOR = '#ef6c00';
+	const DEFAULT_NODE_COLOR = '#00695c';
 
 	function recomputeVisibleNodes() {
 		if (!graph || !selected) {
@@ -138,6 +138,6 @@
 	}
 
 	.error {
-		color: #c0392b;
+		color: var(--bs-danger);
 	}
 </style>

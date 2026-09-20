@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
-from feedstock_maintainers.graph_data import build_graph
+import pytest
+
+from feedstock_maintainers.graph_data import (
+    build_graph,
+    build_package_maintainers,
+    compute_maintainer_coverage,
+)
 
 
 def _info(login: str) -> dict:
@@ -182,3 +188,99 @@ def test_all_nodes_have_metric_keys_present():
     expected_keys = {"degreeCentrality", "weightedDegree", "betweennessCentrality", "pagerank"}
     for node in graph["nodes"]:
         assert expected_keys.issubset(node["attributes"].keys())
+
+
+def test_build_package_maintainers_simple_one_to_one_mapping():
+    package_names = {"widget-feedstock": ["widget"]}
+    maintainers = {"widget-feedstock": ["alice", "bob"]}
+
+    result = build_package_maintainers(package_names, maintainers)
+
+    assert result == {"widget": ["alice", "bob"]}
+
+
+def test_build_package_maintainers_multi_output_feedstock_fans_out():
+    package_names = {"boost-feedstock": ["libboost", "boost-cpp"]}
+    maintainers = {"boost-feedstock": ["alice"]}
+
+    result = build_package_maintainers(package_names, maintainers)
+
+    assert result == {"libboost": ["alice"], "boost-cpp": ["alice"]}
+
+
+def test_build_package_maintainers_falls_back_to_feedstock_name_when_unresolved():
+    package_names: dict[str, list[str]] = {"widget-feedstock": []}
+    maintainers = {"widget-feedstock": ["alice"]}
+
+    result = build_package_maintainers(package_names, maintainers)
+
+    assert result == {"widget-feedstock": ["alice"]}
+
+
+def test_build_package_maintainers_unions_maintainers_on_name_collision():
+    package_names = {
+        "widget-feedstock": ["widget"],
+        "widget2-feedstock": ["widget"],
+    }
+    maintainers = {
+        "widget-feedstock": ["alice"],
+        "widget2-feedstock": ["bob", "alice"],
+    }
+
+    result = build_package_maintainers(package_names, maintainers)
+
+    assert result == {"widget": ["alice", "bob"]}
+
+
+def test_build_package_maintainers_feedstock_absent_from_maintainers_is_empty():
+    package_names = {"widget-feedstock": ["widget"]}
+    maintainers: dict[str, list[str]] = {}
+
+    result = build_package_maintainers(package_names, maintainers)
+
+    assert result == {"widget": []}
+
+
+def _dep_record(name, direct=0, transitive=0):
+    return {"name": name, "direct_dependents": direct, "transitive_dependents": transitive}
+
+
+def test_compute_maintainer_coverage_stats_on_hand_computed_set():
+    transitive_dependencies = [
+        _dep_record("a", transitive=10),
+        _dep_record("b", transitive=10),
+        _dep_record("c", transitive=10),
+    ]
+    package_maintainers = {"a": ["alice"], "b": ["alice", "bob"], "c": []}
+
+    result = compute_maintainer_coverage(transitive_dependencies, package_maintainers)
+    stats = result["stats"]
+
+    assert stats["package_count"] == 3
+    assert stats["packages_with_zero_maintainers"] == 1
+    assert stats["mean_maintainers"] == 1.0
+    assert stats["median_maintainers"] == 1.0
+    assert stats["stddev_maintainers"] == pytest.approx((2 / 3) ** 0.5)
+
+
+def test_compute_maintainer_coverage_ranks_zero_maintainer_package_first():
+    transitive_dependencies = [
+        _dep_record("well-maintained", transitive=100),
+        _dep_record("unmaintained", transitive=100),
+    ]
+    package_maintainers = {"well-maintained": ["alice", "bob", "carol"], "unmaintained": []}
+
+    result = compute_maintainer_coverage(transitive_dependencies, package_maintainers)
+
+    assert [p["name"] for p in result["packages"]] == ["unmaintained", "well-maintained"]
+
+
+def test_compute_maintainer_coverage_ties_break_by_name():
+    transitive_dependencies = [
+        _dep_record("zeta", transitive=5),
+        _dep_record("alpha", transitive=5),
+    ]
+
+    result = compute_maintainer_coverage(transitive_dependencies, {})
+
+    assert [p["name"] for p in result["packages"]] == ["alpha", "zeta"]

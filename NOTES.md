@@ -31,3 +31,19 @@ I think the easiest way around this is to set up a cronjob on a server outside o
 2. Run `fsm fetch maintainers --force` to trigger a complete refresh
 3. Recompile everything to `.tar.gz` and upload to `SEED_URL`
 4. Trigger the `reset.yml` action to manually reset GitHub's artifact cache and force a download from `SEED_URL` next time `update.yml` is run
+
+## 2026-09-19
+
+I recently created some commands that will create a simplified graphs of the package dependencies. Now, I want to
+link the maintainer graphs with the package graphs to get a way to query who the maintainers are for a particular
+package.
+
+This will help me answer the questions like, "what packages are heavily depended on in the ecosystem but have
+relatively few maintainers?" or simpler questions like, "what's the mean, median and std dev of number of maintainers
+per package?"
+
+### The website itself
+
+I also want to begin working on the website itself because that's going to be an important part of presenting the
+data. I'm going to go ahead and just use the conda-forge.org website itself as a style guide. It will also help if
+we ever want this project to be more closely integrated into it.

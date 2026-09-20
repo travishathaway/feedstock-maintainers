@@ -14,7 +14,7 @@
 	{@const attrs = $selectedNodeAttributes}
 	<div class="node-detail-panel border-start h-100 overflow-auto py-3 px-3">
 		<div class="d-flex justify-content-between align-items-start mb-3">
-			<h6 class="text-uppercase text-secondary fw-semibold small mb-0 d-flex align-items-center gap-2">
+			<h6 class="text-uppercase text-body-secondary fw-semibold small mb-0 d-flex align-items-center gap-2">
 				<i class="bi bi-person-badge"></i> Maintainer
 			</h6>
 			<button
@@ -50,7 +50,7 @@
 			<dd class="col-6">{attrs.feedstockCount}</dd>
 		</dl>
 
-		<h6 class="text-uppercase text-secondary fw-semibold small mb-2 d-flex align-items-center gap-2">
+		<h6 class="text-uppercase text-body-secondary fw-semibold small mb-2 d-flex align-items-center gap-2">
 			<i class="bi bi-diagram-3"></i> Connectedness
 		</h6>
 		<dl class="row small">
