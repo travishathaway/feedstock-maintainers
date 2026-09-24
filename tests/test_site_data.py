@@ -7,6 +7,7 @@ from feedstock_maintainers.site_data import (
     STATUS_HEALTHY,
     STATUS_WATCH,
     _maintainer_graph_adjacency,
+    active_maintainer_count_for_feedstocks,
     build_maintainer_ego_network,
     build_maintainer_profiles,
     build_package_profiles,
@@ -43,6 +44,48 @@ def test_status_thresholds():
     assert compute_status(5) == STATUS_WATCH
     assert compute_status(6) == STATUS_HEALTHY
     assert compute_status(100) == STATUS_HEALTHY
+
+
+def test_status_active_maintainer_count_zero_demotes_healthy_to_at_risk():
+    assert compute_status(6, active_maintainer_count=0) == STATUS_AT_RISK
+
+
+def test_status_active_maintainer_count_zero_demotes_watch_to_at_risk():
+    assert compute_status(4, active_maintainer_count=0) == STATUS_AT_RISK
+
+
+def test_status_active_maintainer_count_none_preserves_declared_only_behavior():
+    assert compute_status(6, active_maintainer_count=None) == STATUS_HEALTHY
+
+
+def test_status_active_maintainer_count_nonzero_does_not_change_declared_status():
+    assert compute_status(6, active_maintainer_count=3) == STATUS_HEALTHY
+
+
+def test_active_maintainer_count_for_feedstocks_none_when_no_activity_data():
+    assert active_maintainer_count_for_feedstocks(["widget-feedstock"], None) is None
+    assert active_maintainer_count_for_feedstocks(["widget-feedstock"], {}) is None
+
+
+def test_active_maintainer_count_for_feedstocks_none_when_feedstock_not_covered():
+    activity: dict[str, dict] = {"other-feedstock": {"active_maintainers": {"alice": {}}}}
+    assert active_maintainer_count_for_feedstocks(["widget-feedstock"], activity) is None
+
+
+def test_active_maintainer_count_for_feedstocks_unions_across_multiple_feedstocks():
+    activity: dict[str, dict] = {
+        "widget-feedstock": {"active_maintainers": {"alice": {}, "bob": {}}},
+        "gadget-feedstock": {"active_maintainers": {"bob": {}, "carol": {}}},
+    }
+    assert (
+        active_maintainer_count_for_feedstocks(["widget-feedstock", "gadget-feedstock"], activity)
+        == 3
+    )
+
+
+def test_active_maintainer_count_for_feedstocks_zero_when_covered_but_nobody_active():
+    activity: dict[str, dict] = {"widget-feedstock": {"active_maintainers": {}}}
+    assert active_maintainer_count_for_feedstocks(["widget-feedstock"], activity) == 0
 
 
 def test_risk_score_laplace_smoothed():
@@ -568,6 +611,55 @@ def test_package_profile_status_derived_from_maintainer_count():
     assert profiles["at-risk"]["status"] == STATUS_AT_RISK
     assert profiles["watch"]["status"] == STATUS_WATCH
     assert profiles["healthy"]["status"] == STATUS_HEALTHY
+
+
+def test_package_profile_active_maintainer_count_null_without_activity_data():
+    package_maintainers = {"widget": ["alice"]}
+    profile = dict(build_package_profiles(package_maintainers, {}, _package_graph({}, []), [], {}))[
+        "widget"
+    ]
+    assert profile["active_maintainer_count"] is None
+
+
+def test_package_profile_active_maintainer_count_from_feedstock_activity():
+    package_maintainers = {"widget": ["alice"]}
+    package_names = {"widget-feedstock": ["widget"]}
+    feedstock_activity: dict[str, dict] = {
+        "widget-feedstock": {"active_maintainers": {"alice": {}, "bob": {}}},
+    }
+    profile = dict(
+        build_package_profiles(
+            package_maintainers,
+            {},
+            _package_graph({}, []),
+            [],
+            {},
+            package_names,
+            None,
+            feedstock_activity,
+        )
+    )["widget"]
+    assert profile["active_maintainer_count"] == 2
+
+
+def test_package_profile_status_demoted_to_at_risk_when_active_count_zero():
+    package_maintainers = {"healthy": ["alice", "bob", "carol", "dave", "erin", "frank"]}
+    package_names = {"healthy-feedstock": ["healthy"]}
+    feedstock_activity: dict[str, dict] = {"healthy-feedstock": {"active_maintainers": {}}}
+    profile = dict(
+        build_package_profiles(
+            package_maintainers,
+            {},
+            _package_graph({}, []),
+            [],
+            {},
+            package_names,
+            None,
+            feedstock_activity,
+        )
+    )["healthy"]
+    assert profile["active_maintainer_count"] == 0
+    assert profile["status"] == STATUS_AT_RISK
 
 
 def test_package_profile_direct_dependencies_and_notable_dependents():

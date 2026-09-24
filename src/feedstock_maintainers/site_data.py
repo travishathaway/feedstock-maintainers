@@ -21,6 +21,12 @@ the already-parsed contents of the root `*.json` artifacts:
   - `licenses.json`: {feedstock: license} (as produced by `generate maintainers
     --license-output`), omitted for a feedstock whose recipe declares none. Optional -- may not
     exist for an older recipe cache, in which case every package profile's `license` is `None`.
+  - `feedstock-activity.json`'s `"feedstocks"` sub-object (as produced by
+    `activity.build_feedstock_activity`): {feedstock: {tier, active_maintainers, ...}} for the
+    popularity-thresholded tier of feedstocks `activity.py` covers. Optional and partial by
+    design -- a feedstock absent from it means "no activity data collected", not "zero active
+    maintainers"; every function here distinguishes that `None` from an explicit `0` (see
+    `compute_status`, `active_maintainer_count_for_feedstocks`).
 
 Design decisions worth calling out (kept consistent across every output so the same number never
 looks different on two pages):
@@ -82,13 +88,23 @@ def team_handles(logins: Iterable[str]) -> set[str]:
     return {login for login in logins if is_team_handle(login)}
 
 
-def compute_status(maintainer_count: int) -> str:
+def compute_status(maintainer_count: int, active_maintainer_count: int | None = None) -> str:
     """Map a (team-handle-excluded) maintainer count to a health status.
 
-    Thresholds (decision #5 in the plan, no staleness/timestamp data exists so this is
-    maintainer-count only): <=2 -> at_risk, 3-5 -> watch, 6+ -> healthy.
+    Base thresholds (decision #5 in the plan): <=2 -> at_risk, 3-5 -> watch, 6+ -> healthy.
+
+    `active_maintainer_count` (from `feedstock-activity.json`, see `activity.py`) is the number of
+    distinct logins who actually authored/merged/reviewed a merged PR in the trailing 12 months --
+    a second, activity-based signal alongside the purely recipe-declared `maintainer_count`. When
+    it's known and zero, the status is demoted to at_risk even if the declared count looks
+    healthy: a maintainer list that reads fine on paper but nobody has touched in a year is exactly
+    the case this signal exists to catch. `None` (activity data not collected for this feedstock,
+    e.g. it's outside the popularity-thresholded tier `activity.py` covers) leaves the
+    declared-count-only behavior unchanged -- callers must not treat `None` the same as `0`.
     """
     if maintainer_count <= 2:
+        return STATUS_AT_RISK
+    if active_maintainer_count == 0:
         return STATUS_AT_RISK
     if maintainer_count <= 5:
         return STATUS_WATCH
@@ -531,6 +547,25 @@ def feedstocks_by_package_name(package_names: dict[str, list[str]]) -> dict[str,
     return {package: sorted(feedstocks) for package, feedstocks in by_package.items()}
 
 
+def active_maintainer_count_for_feedstocks(
+    feedstocks: list[str], feedstock_activity: dict[str, dict] | None
+) -> int | None:
+    """Number of distinct logins active (declared or not) across `feedstocks` in the trailing
+    activity window, or `None` if none of `feedstocks` is covered by `feedstock_activity` (as
+    produced by `activity.build_feedstock_activity`) -- distinct from `0`, which means activity
+    data exists and says nobody was active. Callers must preserve that distinction (see
+    `compute_status`) rather than defaulting a missing feedstock to zero."""
+    if not feedstock_activity:
+        return None
+    covered = [feedstock_activity[fs] for fs in feedstocks if fs in feedstock_activity]
+    if not covered:
+        return None
+    active: set[str] = set()
+    for record in covered:
+        active.update(record.get("active_maintainers", {}))
+    return len(active)
+
+
 def build_package_profile(
     name: str,
     maintainer_logins: list[str],
@@ -542,11 +577,15 @@ def build_package_profile(
     normalized_package_downloads: dict[str, dict[str, int]],
     feedstocks: list[str],
     license: str | None,
+    feedstock_activity: dict[str, dict] | None = None,
 ) -> dict[str, Any]:
     """Build one `packages/<name>.json` payload. `normalized_package_downloads` must already be
     the output of `normalize_package_downloads`. `feedstocks` is the (sorted, non-empty) list of
     feedstock(s) that produce this package name (see `feedstocks_by_package_name`); `license` is
-    the declared license of the first of them that has one, or `None`."""
+    the declared license of the first of them that has one, or `None`. `feedstock_activity` is the
+    optional `"feedstocks"` sub-object of `feedstock-activity.json` (see `activity.py`); omitting
+    it (or a package whose feedstock(s) aren't covered) just means `active_maintainer_count` is
+    `None`, not an error."""
     handles = team_handles(maintainer_logins)
     maintainer_count = len([login for login in maintainer_logins if login not in handles])
     maintainers = [
@@ -587,16 +626,19 @@ def build_package_profile(
         for feedstock in feedstocks
     ]
 
+    active_maintainer_count = active_maintainer_count_for_feedstocks(feedstocks, feedstock_activity)
+
     return {
         "name": name,
         "maintainers": maintainers,
         "maintainer_count": maintainer_count,
+        "active_maintainer_count": active_maintainer_count,
         "dependent_feedstock_count": dependent_feedstock_count,
         "direct_dependencies": direct_dependencies,
         "notable_dependents": notable_dependents,
         "downloads_monthly": downloads_monthly,
         "downloads_last_month": downloads_last_month,
-        "status": compute_status(maintainer_count),
+        "status": compute_status(maintainer_count, active_maintainer_count),
         "feedstocks": feedstock_links,
         "license": license,
     }
@@ -610,14 +652,17 @@ def build_package_profiles(
     package_downloads: dict[str, dict[str, int]],
     package_names: dict[str, list[str]] | None = None,
     licenses: dict[str, str] | None = None,
+    feedstock_activity: dict[str, dict] | None = None,
 ) -> Iterator[tuple[str, dict[str, Any]]]:
     """Yield `(name, profile)` for every package in `package_maintainers` (sorted) -- exactly the
     names `packages/index.json` should list.
 
-    `package_names` (as produced by `generate maintainers --package-names-output`) and `licenses`
-    (as produced by `generate maintainers --license-output`) are both optional -- omitting them
-    (or passing feedstocks/names they don't cover) just means the resulting profile(s) have no
-    known feedstock link or license, rather than raising.
+    `package_names` (as produced by `generate maintainers --package-names-output`), `licenses` (as
+    produced by `generate maintainers --license-output`), and `feedstock_activity` (the
+    `"feedstocks"` sub-object of `feedstock-activity.json`, see `activity.py`) are all optional --
+    omitting them (or passing feedstocks/names they don't cover) just means the resulting
+    profile(s) have no known feedstock link, license, or `active_maintainer_count`, rather than
+    raising.
     """
     successors, predecessors, pagerank_by_name = _package_graph_indices(package_graph)
     transitive_by_name = {record["name"]: record for record in transitive_dependency_records}
@@ -640,5 +685,6 @@ def build_package_profiles(
                 normalized_package_downloads,
                 feedstocks,
                 license,
+                feedstock_activity,
             ),
         )

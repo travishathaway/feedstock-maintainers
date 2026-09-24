@@ -81,7 +81,14 @@
 		<div class="col me-4 card text-bg-light">
 			<div class="card-body">
 				<span class="h3">{formatNumber(profile.maintainer_count)}</span>
-				<p class="mb-0">Maintainers</p>
+				<p class="mb-0">
+					Maintainers
+					{#if profile.active_maintainer_count !== null}
+						<br /><span class="text-body-secondary small"
+							>{formatNumber(profile.active_maintainer_count)} active (12mo)</span
+						>
+					{/if}
+				</p>
 			</div>
 		</div>
 		<div class="col me-4 card text-bg-light">

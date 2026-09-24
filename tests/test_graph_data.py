@@ -56,6 +56,39 @@ def test_third_user_sharing_one_feedstock_with_each_gets_weight_one_edges():
     assert weights == {("alice", "bob"): 2, ("alice", "carol"): 1, ("bob", "carol"): 1}
 
 
+def test_active_feedstock_count_defaults_to_zero_without_activity_data():
+    maintainers = {"widget-feedstock": ["alice"]}
+    maintainer_info = {"alice": _info("alice")}
+
+    graph = build_graph(maintainers, maintainer_info)
+
+    assert graph["nodes"][0]["attributes"]["activeFeedstockCount"] == 0
+
+
+def test_active_feedstock_count_sums_across_covered_feedstocks():
+    maintainers = {"widget-feedstock": ["alice"], "gadget-feedstock": ["alice"]}
+    maintainer_info = {"alice": _info("alice")}
+    activity = {
+        "widget-feedstock": {"active_maintainers": {"alice": {"total_events": 3}}},
+        "gadget-feedstock": {"active_maintainers": {"alice": {"total_events": 1}}},
+    }
+
+    graph = build_graph(maintainers, maintainer_info, activity=activity)
+
+    assert graph["nodes"][0]["attributes"]["activeFeedstockCount"] == 2
+
+
+def test_active_feedstock_count_ignores_logins_outside_maintainer_info():
+    maintainers = {"widget-feedstock": ["alice"]}
+    maintainer_info = {"alice": _info("alice")}
+    activity: dict[str, dict] = {"widget-feedstock": {"active_maintainers": {"ghost": {}}}}
+
+    graph = build_graph(maintainers, maintainer_info, activity=activity)
+
+    assert [n["key"] for n in graph["nodes"]] == ["alice"]
+    assert graph["nodes"][0]["attributes"]["activeFeedstockCount"] == 0
+
+
 def test_team_handle_excluded_but_real_comaintainers_still_get_credit():
     maintainers = {"widget-feedstock": ["alice", "bob", "conda-forge/go"]}
     maintainer_info = {"alice": _info("alice"), "bob": _info("bob")}

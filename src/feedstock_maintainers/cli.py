@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import shutil
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
@@ -24,6 +24,7 @@ from rich.progress import (
 )
 from rich.table import Table
 
+from . import activity, feedstock_tiers
 from . import feedstock_count_history as fch
 from .cache import RecipeCache
 from .github import (
@@ -946,6 +947,213 @@ def fetch_package_downloads(
         console.print(f"[yellow]{missing}[/] month(s) had no data published yet (skipped)")
 
 
+@fetch.command("feedstock-activity")
+@click.option(
+    "--tiers-file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path("feedstock-tiers.json"),
+    show_default=True,
+    help="Path to the feedstock tiers JSON file (as produced by `generate feedstock-tiers`).",
+)
+@click.option(
+    "--tier",
+    "tiers",
+    multiple=True,
+    default=("top",),
+    show_default=True,
+    help="Which tier(s) to fetch activity for. Repeat for multiple.",
+)
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=Path("feedstock-activity-raw.json"),
+    show_default=True,
+    help="Path to the raw per-feedstock activity events file to update/create.",
+)
+@click.option(
+    "--since",
+    default=None,
+    help="Only fetch feedstocks flagged as updated since this timestamp (via the same mono-repo "
+    "commit check `fetch feedstocks --since` uses) plus any never-fetched/stale tier members. "
+    "Omit for a full fetch of every eligible tier member -- expensive; prefer running that "
+    "manually or from an external box, not from the 3-hourly update workflow (same rationale as "
+    "the full `maintainer-info` refresh in NOTES.md).",
+)
+@click.option(
+    "--activity-window-days",
+    type=int,
+    default=365,
+    show_default=True,
+    help="How many trailing days of merged-PR history to request per feedstock from GitHub's "
+    "search API.",
+)
+@click.option(
+    "--force/--resume",
+    default=False,
+    help="Re-fetch every tier member regardless of --since/staleness (default: resume).",
+)
+@click.option(
+    "--staleness-days",
+    type=int,
+    default=35,
+    show_default=True,
+    help="Re-fetch a tier member even if not flagged as updated, once its last fetch is older "
+    "than this -- a safety net for activity the --since check might miss.",
+)
+@click.option(
+    "--batch-size",
+    type=int,
+    default=20,
+    show_default=True,
+    help="Number of feedstocks aliased into one GraphQL request.",
+)
+@click.option(
+    "--prs-per-feedstock",
+    "prs_first",
+    type=int,
+    default=50,
+    show_default=True,
+    help="Merged PRs requested per feedstock per page.",
+)
+@click.option(
+    "--reviews-per-pr",
+    "reviews_first",
+    type=int,
+    default=5,
+    show_default=True,
+    help="Approved reviews requested per PR -- the main GraphQL point-cost lever; tune this down "
+    "first if --rate-limit cost reports come back too high.",
+)
+@click.option(
+    "--retries",
+    type=int,
+    default=3,
+    show_default=True,
+    help="Retries for transient errors (403/429/5xx/network) per request.",
+)
+@click.option(
+    "--timeout",
+    type=float,
+    default=30.0,
+    show_default=True,
+    help="Per-request timeout in seconds.",
+)
+@click.option(
+    "--token",
+    envvar="GITHUB_TOKEN",
+    default=None,
+    help="GitHub token. Required in practice -- GraphQL's anonymous rate limit is far too tight "
+    "for this command. Prefer setting the GITHUB_TOKEN environment variable over this flag so "
+    "the token doesn't end up in your shell history.",
+)
+@click.option(
+    "--rate-limit",
+    "requests_per_second",
+    type=float,
+    default=1.0,
+    show_default=True,
+    help="Steady-state cap on GraphQL requests/second. Pass 0 to disable pacing entirely.",
+)
+def fetch_feedstock_activity(
+    tiers_file: Path,
+    tiers: tuple[str, ...],
+    output: Path,
+    since: str | None,
+    activity_window_days: int,
+    force: bool,
+    staleness_days: int,
+    batch_size: int,
+    prs_first: int,
+    reviews_first: int,
+    retries: int,
+    timeout: float,
+    token: str | None,
+    requests_per_second: float,
+) -> None:
+    """Fetch merged-PR activity (author, merger, approving reviewer -- bot-filtered) for a tier of
+    feedstocks from GitHub's GraphQL search API.
+
+    Reads --tiers-file (as produced by `generate feedstock-tiers`) and restricts to feedstocks in
+    --tier. Each request batches --batch-size feedstocks into one aliased GraphQL query. Results
+    are merged into --output by PR number, so incremental (--since) runs accumulate history rather
+    than overwriting it. Run `generate feedstock-activity` afterward to turn the raw cache into
+    feedstock-activity.json.
+    """
+    console = Console()
+
+    tiers_data = json.loads(tiers_file.read_text(encoding="utf-8"))["feedstocks"]
+    tier_set = set(tiers)
+    tier_members = sorted(name for name, info in tiers_data.items() if info["tier"] in tier_set)
+    tier_by_feedstock = {name: tiers_data[name]["tier"] for name in tier_members}
+    console.print(f"{len(tier_members)} feedstocks in tier(s) {sorted(tier_set)}")
+
+    if since is not None:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            TimeElapsedColumn(),
+            console=console,
+            transient=True,
+        ) as progress:
+            task = progress.add_task(f"Finding feedstocks updated since {since}...", total=None)
+            updated_feedstocks = fetch_updated_feedstocks(
+                since,
+                token=token,
+                on_step=lambda description: progress.update(task, description=description + "..."),
+            )
+        console.print(f"{len(updated_feedstocks)} feedstocks changed since {since}")
+    else:
+        updated_feedstocks = None
+
+    store = activity.ActivityStore(output)
+    now = datetime.now(timezone.utc)
+    todo = [
+        name
+        for name in tier_members
+        if store.should_fetch(name, updated_feedstocks, force, now, timedelta(days=staleness_days))
+    ]
+    console.print(
+        f"{len(todo)} to fetch ({len(tier_members) - len(todo)} already fresh in {output})"
+    )
+
+    if not todo:
+        console.print("[green]Nothing to do.[/]")
+        return
+
+    since_date = (date.today() - timedelta(days=activity_window_days)).isoformat()
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        TimeElapsedColumn(),
+        console=console,
+        transient=True,
+    ) as progress:
+        task = progress.add_task("Fetching feedstock activity...", total=None)
+        asyncio.run(
+            activity.run_activity_fetch(
+                todo,
+                since_date,
+                store,
+                tier_by_feedstock,
+                token,
+                batch_size=batch_size,
+                prs_first=prs_first,
+                reviews_first=reviews_first,
+                requests_per_second=requests_per_second,
+                retries=retries,
+                timeout=timeout,
+                on_step=lambda description: progress.update(task, description=description + "..."),
+            )
+        )
+
+    store.prune_old_events(date.today())
+    store.flush()
+
+    console.print(f"[green]Done.[/] Activity for {len(todo)} feedstocks written to {output}")
+
+
 @main.group()
 def generate() -> None:
     """Build artifacts from the local recipe cache. No network access, except `package-graph`
@@ -1147,6 +1355,15 @@ def generate_feedstock_count_append(
     help="Path to per-maintainer GitHub user info (as produced by `fetch maintainer-info`).",
 )
 @click.option(
+    "--feedstock-activity-file",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=Path("feedstock-activity.json"),
+    show_default=True,
+    help="Path to feedstock activity data (as produced by `generate feedstock-activity`). Skipped "
+    "with a warning (not an error) if it doesn't exist yet -- every node's activeFeedstockCount "
+    "is then 0.",
+)
+@click.option(
     "--output",
     "-o",
     type=click.Path(path_type=Path, dir_okay=False),
@@ -1155,7 +1372,7 @@ def generate_feedstock_count_append(
     help="Path to write the graphology-format maintainer collaboration graph JSON.",
 )
 def generate_maintainer_graph_data(
-    maintainers_file: Path, maintainer_info_file: Path, output: Path
+    maintainers_file: Path, maintainer_info_file: Path, feedstock_activity_file: Path, output: Path
 ) -> None:
     """Build a maintainer collaboration graph from --maintainers-file and --maintainer-info-file.
 
@@ -1167,6 +1384,9 @@ def generate_maintainer_graph_data(
 
     maintainers_data = json.loads(maintainers_file.read_text(encoding="utf-8"))
     maintainer_info_data = json.loads(maintainer_info_file.read_text(encoding="utf-8"))
+    feedstock_activity_data = _load_json_if_exists(
+        feedstock_activity_file, console, "every node's activeFeedstockCount will be 0"
+    ).get("feedstocks", {})
 
     with Progress(
         SpinnerColumn(),
@@ -1180,6 +1400,7 @@ def generate_maintainer_graph_data(
             maintainers_data,
             maintainer_info_data,
             on_step=lambda description: progress.update(task, description=description + "..."),
+            activity=feedstock_activity_data,
         )
 
     _atomic_write(output, graph)
@@ -1468,6 +1689,165 @@ def generate_maintainer_coverage(
     console.print(f"Full results written to {output}")
 
 
+@generate.command("feedstock-tiers")
+@click.option(
+    "--package-names-file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path("package-names.json"),
+    show_default=True,
+    help="Path to the package names JSON file (as produced by `generate maintainers`).",
+)
+@click.option(
+    "--package-downloads-file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path("package-downloads.json"),
+    show_default=True,
+    help="Path to monthly package download totals (as produced by `fetch package-downloads`).",
+)
+@click.option(
+    "--transitive-dependencies-file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path("transitive-dependencies.json"),
+    show_default=True,
+    help="Path to the ranking JSON file (as produced by `generate transitive-dependencies`).",
+)
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=Path("feedstock-tiers.json"),
+    show_default=True,
+    help="Path to write the feedstock tiers JSON file.",
+)
+@click.option(
+    "--top-downloads-fraction",
+    type=float,
+    default=0.10,
+    show_default=True,
+    help="Fraction of feedstocks, ranked by last month's downloads, to put in the top tier.",
+)
+@click.option(
+    "--top-transitive-fraction",
+    type=float,
+    default=0.05,
+    show_default=True,
+    help="Fraction of feedstocks, ranked by transitive dependents, unioned into the top tier -- "
+    "catches low-download-but-structurally-critical packages (compilers, toolchains) that "
+    "download ranking alone would miss.",
+)
+def generate_feedstock_tiers(
+    package_names_file: Path,
+    package_downloads_file: Path,
+    transitive_dependencies_file: Path,
+    output: Path,
+    top_downloads_fraction: float,
+    top_transitive_fraction: float,
+) -> None:
+    """Rank feedstocks by popularity/importance and split them into a "top" tier plus everyone
+    else.
+
+    Feeds `fetch feedstock-activity`: only the top tier gets the expensive per-feedstock GitHub
+    activity fetch. A feedstock's score is the max across its output package name(s) (see
+    --package-names-file).
+    """
+    console = Console()
+
+    package_names_data = json.loads(package_names_file.read_text(encoding="utf-8"))
+    package_downloads_data = json.loads(package_downloads_file.read_text(encoding="utf-8"))
+    transitive_data = json.loads(transitive_dependencies_file.read_text(encoding="utf-8"))[
+        "packages"
+    ]
+
+    generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    result = feedstock_tiers.compute_feedstock_tiers(
+        package_names_data,
+        package_downloads_data,
+        transitive_data,
+        generated_at,
+        top_downloads_fraction=top_downloads_fraction,
+        top_transitive_fraction=top_transitive_fraction,
+    )
+    _atomic_write(output, result)
+
+    top_count = sum(1 for info in result["feedstocks"].values() if info["tier"] == "top")
+    console.print(
+        f"[green]Done.[/] {top_count} of {len(result['feedstocks'])} feedstocks in the top tier, "
+        f"written to {output}"
+    )
+
+
+@generate.command("feedstock-activity")
+@click.option(
+    "--raw-file",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=Path("feedstock-activity-raw.json"),
+    show_default=True,
+    help="Path to the raw per-feedstock activity events file (as produced by `fetch "
+    "feedstock-activity`). Skipped with a warning (not an error) if it doesn't exist yet.",
+)
+@click.option(
+    "--maintainers-file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path("maintainers.json"),
+    show_default=True,
+    help="Path to the maintainers JSON file (as produced by `generate maintainers`).",
+)
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=Path("feedstock-activity.json"),
+    show_default=True,
+    help="Path to write the final, window-pruned feedstock activity JSON file.",
+)
+@click.option(
+    "--window-months",
+    type=int,
+    default=12,
+    show_default=True,
+    help="Trailing months of activity to keep in --output.",
+)
+def generate_feedstock_activity(
+    raw_file: Path, maintainers_file: Path, output: Path, window_months: int
+) -> None:
+    """Prune raw per-feedstock activity to the trailing window and join it against declared
+    maintainers.
+
+    Pure and offline -- no network access. Reads --raw-file (as produced by `fetch
+    feedstock-activity`) and --maintainers-file, and writes, per feedstock covered by --raw-file,
+    which logins were active in the trailing --window-months (author/merger/approving reviewer,
+    bot-filtered, with monthly counts) alongside the declared-vs-active set differences
+    (declared_and_active / declared_not_active / active_not_declared).
+    """
+    console = Console()
+
+    raw_data = _load_json_if_exists(
+        raw_file, console, "feedstock-activity.json will have no covered feedstocks"
+    )
+    maintainers_data = json.loads(maintainers_file.read_text(encoding="utf-8"))
+
+    raw_entries = {
+        name: activity.ActivityEntry(
+            tier=fields.get("tier", "long_tail"),
+            fetched_at=fields["fetched_at"],
+            events=fields.get("events", []),
+            bot_merged_count=fields.get("bot_merged_count", 0),
+        )
+        for name, fields in raw_data.items()
+    }
+
+    generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    result = activity.build_feedstock_activity(
+        raw_entries, maintainers_data, generated_at, window_months=window_months
+    )
+    _atomic_write(output, result)
+
+    console.print(
+        f"[green]Done.[/] Activity computed for {len(result['feedstocks'])} feedstocks, "
+        f"written to {output}"
+    )
+
+
 @generate.command("site-data")
 @click.option(
     "--maintainers-file",
@@ -1535,6 +1915,15 @@ def generate_maintainer_coverage(
     "--license-output`). Skipped with a warning (not an error) if it doesn't exist yet.",
 )
 @click.option(
+    "--feedstock-activity-file",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=Path("feedstock-activity.json"),
+    show_default=True,
+    help="Path to feedstock activity data (as produced by `generate feedstock-activity`). Skipped "
+    "with a warning (not an error) if it doesn't exist yet -- package profiles then have "
+    "active_maintainer_count: null for every package (no activity data collected, not zero).",
+)
+@click.option(
     "--maintainer-history-file",
     type=click.Path(dir_okay=False, path_type=Path),
     default=Path("maintainer-history.json"),
@@ -1571,6 +1960,7 @@ def generate_site_data(
     package_graph_file: Path,
     transitive_dependencies_file: Path,
     license_file: Path,
+    feedstock_activity_file: Path,
     maintainer_history_file: Path,
     feedstock_count_history_file: Path,
     output_dir: Path,
@@ -1578,7 +1968,8 @@ def generate_site_data(
     """Build small, page-ready JSON payloads for the statistics/profile pages.
 
     Reads every existing root artifact (maintainers, maintainer profiles, both collaboration and
-    dependency graphs, package downloads, transitive dependency rankings) and writes:
+    dependency graphs, package downloads, transitive dependency rankings, feedstock activity) and
+    writes:
     --output-dir/maintainer-overview.json, --output-dir/package-overview.json,
     --output-dir/maintainers/index.json plus one --output-dir/maintainers/<login>.json per
     maintainer with a GitHub profile, and --output-dir/packages/index.json plus one
@@ -1604,6 +1995,9 @@ def generate_site_data(
     licenses_data = _load_json_if_exists(
         license_file, console, "package profiles will have no license shown"
     )
+    feedstock_activity_data = _load_json_if_exists(
+        feedstock_activity_file, console, "package profiles will have active_maintainer_count: null"
+    ).get("feedstocks", {})
 
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -1650,6 +2044,7 @@ def generate_site_data(
         package_downloads_data,
         package_names_data,
         licenses_data,
+        feedstock_activity_data,
     ):
         package_names_list.append(name)
         _write_json_fast(packages_dir / f"{name}.json", profile)

@@ -25,11 +25,19 @@ def build_graph(
     maintainers: dict[str, list[str]],
     maintainer_info: dict[str, dict],
     on_step: Callable[[str], None] | None = None,
+    activity: dict[str, dict] | None = None,
 ) -> dict:
     """Return a graphology-native serialized graph (nodes = maintainers, edges = co-maintenance).
 
     If given, `on_step` is called with a short description before each major phase begins --
     intended for driving a progress display around a call that can take a while on large graphs.
+
+    `activity` is the optional `"feedstocks"` sub-object of `feedstock-activity.json` (see
+    `activity.py`) -- when given, every node gets an `activeFeedstockCount` attribute counting how
+    many of that login's feedstocks it appears as an active maintainer in (declared or not).
+    Omitting it (or covering only some feedstocks, since `activity.py` only fetches a
+    popularity-thresholded tier) just means `activeFeedstockCount` is `0` for uncovered logins,
+    not an error.
     """
     step = on_step or (lambda _description: None)
 
@@ -41,6 +49,10 @@ def build_graph(
         present = sorted({name for name in names if name in maintainer_info})
         feedstock_counts.update(present)
         pair_weights.update(combinations(present, 2))
+
+    active_feedstock_counts: Counter[str] = Counter()
+    for record in (activity or {}).values():
+        active_feedstock_counts.update(record.get("active_maintainers", {}).keys())
 
     step("Building collaboration graph")
     metrics_graph = nx.Graph()
@@ -80,6 +92,7 @@ def build_graph(
                 "followers": maintainer_info[login].get("followers"),
                 "publicRepos": maintainer_info[login].get("public_repos"),
                 "feedstockCount": count,
+                "activeFeedstockCount": active_feedstock_counts.get(login, 0),
                 "degreeCentrality": round(degree_centrality[login], 6),
                 "weightedDegree": weighted_degree[login],
                 "betweennessCentrality": round(betweenness_centrality[login], 6),

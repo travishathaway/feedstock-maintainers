@@ -114,6 +114,10 @@ export interface PackageProfile {
 	name: string;
 	maintainers: PackageMaintainer[];
 	maintainer_count: number;
+	// null means no GitHub activity data has been collected for this package's feedstock(s) yet
+	// (only a popularity-thresholded tier is covered) -- distinct from 0, which means activity
+	// data exists and says nobody has authored/merged/reviewed a PR in the last 12 months.
+	active_maintainer_count: number | null;
 	dependent_feedstock_count: number | null;
 	direct_dependencies: string[];
 	notable_dependents: string[];

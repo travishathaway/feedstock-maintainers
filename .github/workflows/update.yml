@@ -114,6 +114,41 @@ jobs:
         run: |
           pixi run fsm fetch package-downloads
 
+      - name: Update feedstock activity tier
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SINCE: ${{ needs.find-source.outputs.since }}
+        run: |
+          pixi run fsm generate feedstock-tiers \
+            --package-names-file package-names.json \
+            --package-downloads-file package-downloads.json \
+            --transitive-dependencies-file transitive-dependencies.json \
+            --output feedstock-tiers.json
+
+          # Only ever an incremental fetch here (tier members changed since the last run) -- a
+          # full top-tier fetch is expensive enough (unlike fetch-feedstocks' cold-start fetch)
+          # that it's kept out of this 3-hourly job entirely, same rationale as the full
+          # maintainer-info refresh in NOTES.md. On a cold start (no $SINCE -- no prior artifact)
+          # this step is skipped and feedstock-activity.json simply isn't produced until either a
+          # manual `fsm fetch feedstock-activity` run (no --since) seeds
+          # feedstock-activity-raw.json, or the next run's incremental fetch starts accumulating
+          # history on its own -- every downstream consumer already treats missing activity data
+          # as "not collected yet", not an error.
+          if [ -n "$SINCE" ]; then
+            pixi run fsm fetch feedstock-activity \
+              --tiers-file feedstock-tiers.json --tier top --since "$SINCE" \
+              --output feedstock-activity-raw.json
+          fi
+
+          # Guarantee this exists before it's tarred up below, even on a true cold start (no
+          # prior artifact, so the fetch above was skipped and nothing has ever written it).
+          [ -f feedstock-activity-raw.json ] || echo '{}' > feedstock-activity-raw.json
+
+          pixi run fsm generate feedstock-activity \
+            --raw-file feedstock-activity-raw.json \
+            --maintainers-file maintainers.json \
+            --output feedstock-activity.json
+
       - name: Update maintainer + feedstock count history (monthly)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -143,7 +178,10 @@ jobs:
             licenses.json \
             transitive-dependencies.json \
             maintainer-history.json \
-            feedstock-count-history.json
+            feedstock-count-history.json \
+            feedstock-tiers.json \
+            feedstock-activity-raw.json \
+            feedstock-activity.json
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
