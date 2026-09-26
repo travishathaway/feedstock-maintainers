@@ -14,6 +14,7 @@ dependencies = [
     "scipy>=1.10",
     "zstandard>=0.22",
     "pyarrow>=15",
+    "google-cloud-bigquery>=3.20",
 ]
 
 [project.scripts]
@@ -41,6 +42,7 @@ scipy = ">=1.10"
 rich-click = ">=1.9.9,<2"
 zstandard = ">=0.22"
 pyarrow = ">=15"
+google-cloud-bigquery = ">=3.20"
 
 [tool.pixi.pypi-dependencies]
 feedstock-maintainers = { path = ".", editable = true }
@@ -109,6 +111,10 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S", "T20"]   # security + print rules relaxed in tests
+# S608 (possible SQL injection): every interpolated value is either a `date` formatted with
+# strftime (digits only) or a login from our own BOT_LOGIN_DENYLIST constant -- no user input
+# ever reaches this string.
+"src/feedstock_maintainers/bigquery_activity.py" = ["S608"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["thath_idp"]

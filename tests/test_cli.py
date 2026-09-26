@@ -861,3 +861,90 @@ def test_generate_site_data_skips_missing_history_files_without_failing(tmp_path
     # the rest of the command still ran normally
     assert (output_dir / "maintainer-overview.json").exists()
     assert (output_dir / "package-overview.json").exists()
+
+
+# --- fetch feedstock-activity-bq -----------------------------------------------------------------
+
+
+def _patch_bigquery(monkeypatch, bytes_processed, rows=()):
+    monkeypatch.setattr(cli_module, "_bigquery_client", lambda project: object())
+    monkeypatch.setattr(
+        cli_module, "_bigquery_dry_run_bytes", lambda client, query: bytes_processed
+    )
+    executed = {}
+
+    def _execute(client, query, maximum_bytes_billed):
+        executed["maximum_bytes_billed"] = maximum_bytes_billed
+        return rows
+
+    monkeypatch.setattr(cli_module, "_bigquery_execute", _execute)
+    return executed
+
+
+def test_fetch_feedstock_activity_bq_requires_a_project():
+    runner = CliRunner()
+    result = runner.invoke(main, ["fetch", "feedstock-activity-bq"])
+    assert result.exit_code != 0
+    assert "--project" in result.output
+
+
+def test_fetch_feedstock_activity_bq_dry_run_reports_estimate_and_writes_nothing(
+    tmp_path, monkeypatch
+):
+    _patch_bigquery(monkeypatch, 2 * 1024**4)
+    output = tmp_path / "feedstock-activity-raw.json"
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        ["fetch", "feedstock-activity-bq", "--project", "my-project", "-o", str(output)],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "2.000 TiB" in result.output
+    assert "Exceeds the free tier" in result.output
+    assert "$6.25" in result.output
+    assert "Dry run only" in result.output
+    assert not output.exists()
+
+
+def test_fetch_feedstock_activity_bq_execute_merges_rows_into_output(tmp_path, monkeypatch):
+    rows = [
+        {
+            "repo_name": "conda-forge/widget-feedstock",
+            "pr_number": "1",
+            "merged_at": "2026-01-01T00:00:00Z",
+            "login": "alice",
+        }
+    ]
+    executed = _patch_bigquery(monkeypatch, 100, rows=rows)
+    output = tmp_path / "feedstock-activity-raw.json"
+
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        [
+            "fetch",
+            "feedstock-activity-bq",
+            "--project",
+            "my-project",
+            "--execute",
+            "-o",
+            str(output),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert executed["maximum_bytes_billed"] == 100
+    written = json.loads(output.read_text())
+    assert written["widget"]["tier"] == "bigquery"
+    assert written["widget"]["events"] == [
+        {"number": 1, "merged_at": "2026-01-01T00:00:00Z", "logins": ["alice"]}
+    ]
+
+
+def test_fetch_feedstock_activity_bq_within_free_tier_reports_no_cost(monkeypatch):
+    _patch_bigquery(monkeypatch, 1024**3)  # 1 GiB, well under the 1 TiB free tier
+    runner = CliRunner()
+    result = runner.invoke(main, ["fetch", "feedstock-activity-bq", "--project", "my-project"])
+    assert result.exit_code == 0, result.output
+    assert "Within the free tier" in result.output

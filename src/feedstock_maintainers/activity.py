@@ -43,7 +43,9 @@ _OWNER = "conda-forge"
 # GitHub's own `__typename == "Bot"` check catches GitHub Apps, but conda-forge's automation
 # accounts aren't all verified to be Bot-typed on GitHub's side -- this denylist is a documented
 # gap (plan OQ-1) to spot-check against live GraphQL responses before relying on it in production.
-_BOT_LOGIN_DENYLIST = frozenset(
+# Public (no leading underscore) so `bigquery_activity.py`'s SQL-side filtering can reuse the same
+# list instead of drifting out of sync with a second copy.
+BOT_LOGIN_DENYLIST = frozenset(
     {
         "regro-cf-autotick-bot",
         "conda-forge-admin",
@@ -118,7 +120,7 @@ def _is_bot(actor: dict | None) -> bool:
         return False
     if actor.get("__typename") == "Bot":
         return True
-    return actor.get("login") in _BOT_LOGIN_DENYLIST
+    return actor.get("login") in BOT_LOGIN_DENYLIST
 
 
 def _human_login(actor: dict | None) -> str | None:
