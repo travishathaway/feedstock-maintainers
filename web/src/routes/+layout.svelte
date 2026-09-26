@@ -4,6 +4,7 @@
 	import { resolve } from '$app/paths';
 	import anvilLogo from '$lib/assets/conda-forge-anvil.png';
 	import favicon from '$lib/assets/conda-forge-favicon.ico';
+	import Footer from '$lib/components/Footer.svelte';
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import '$lib/styles/bootstrap-theme.scss';
 	import 'bootstrap-icons/font/bootstrap-icons.css';
@@ -38,7 +39,7 @@
 	<link rel="icon" href={favicon} />
 </svelte:head>
 
-<div class="d-flex flex-column vh-100">
+<div class="d-flex flex-column min-vh-100">
 	<nav class="navbar navbar-expand-lg navbar-light sticky-top bg-white border-bottom px-3 flex-shrink-0">
 		<a class="navbar-brand d-flex align-items-center gap-2 mb-0 text-truncate" href={resolve('/')} style="min-width: 0;">
 			<img src={anvilLogo} alt="conda-forge" width="auto" height="32" class="me-4" />
@@ -86,11 +87,13 @@
 		</a>
 	</nav>
 
-	<div class="container flex-grow-1" style="min-height: 0;">
+	<div class="container flex-grow-1">
 		<div class="row h-100">
 			<main class="col-12 h-100 d-flex flex-column py-3">
 				{@render children()}
 			</main>
 		</div>
 	</div>
+
+	<Footer />
 </div>

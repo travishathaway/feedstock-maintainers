@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from feedstock_maintainers.site_data import (
+    IGNORED_PACKAGES,
     STATUS_AT_RISK,
     STATUS_HEALTHY,
     STATUS_WATCH,
@@ -16,6 +17,7 @@ from feedstock_maintainers.site_data import (
     compute_risk_score,
     compute_status,
     feedstocks_by_package_name,
+    is_ignored_package,
     is_team_handle,
     latest_month_downloads,
     lookup_package_downloads,
@@ -240,6 +242,22 @@ def test_maintainer_overview_popular_package_top_maintainer_login_null_when_no_p
     assert overview["popular_packages"][0]["maintainer_count"] == 0
 
 
+def test_maintainer_overview_excludes_ignored_packages_from_popular_packages():
+    # Unlike conda's virtual packages, an ignored package (e.g. "pypy3.8") is a real,
+    # feedstock-built package with real maintainers -- it must be dropped explicitly rather than
+    # relying on it being absent from package_maintainers.
+    maintainer_info = {"alice": _info("alice")}
+    package_maintainers = {"numpy": ["alice"], "pypy3.8": ["alice"]}
+    package_downloads = {"numpy": {"2026-01": 100}, "pypy3.8": {"2026-01": 999999}}
+    overview = compute_maintainer_overview(
+        {}, maintainer_info, package_maintainers, package_downloads, "2026-01-01T00:00:00Z"
+    )
+
+    names = [p["name"] for p in overview["popular_packages"]]
+    assert "pypy3.8" not in names
+    assert names == ["numpy"]
+
+
 # ── compute_package_overview ─────────────────────────────────────────────────────────────────
 
 
@@ -339,6 +357,22 @@ def test_package_overview_excludes_virtual_packages_absent_from_package_maintain
     assert overview["stats"]["most_depended_on"]["name"] == "ca-certificates"
     names = [d["name"] for d in overview["transitive_dependencies"]]
     assert "__glibc" not in names
+
+
+def test_package_overview_excludes_ignored_packages_even_with_real_maintainers():
+    # Unlike "__glibc", "pypy3.8" is a real, feedstock-built package present in
+    # package-maintainers.json with real maintainers -- it must still be dropped.
+    records = [
+        _dep("pypy3.8", direct=5, transitive=100000),
+        _dep("ca-certificates", direct=2, transitive=1000),
+    ]
+    package_maintainers = {"ca-certificates": ["alice", "bob"], "pypy3.8": ["carol"]}
+    overview = compute_package_overview(package_maintainers, records, {}, "2026-01-01T00:00:00Z")
+
+    assert overview["stats"]["package_count"] == 1
+    assert overview["stats"]["most_depended_on"]["name"] == "ca-certificates"
+    names = [d["name"] for d in overview["transitive_dependencies"]]
+    assert "pypy3.8" not in names
     assert names == ["ca-certificates"]
 
 
@@ -389,6 +423,17 @@ def test_maintainer_profile_feedstock_count_and_packages():
     assert alice["feedstock_count"] == 2
     # "gadget-feedstock" has no package_names entry -> falls back to its own feedstock name.
     assert alice["packages"] == ["gadget-feedstock", "widget", "widget-devel"]
+
+
+def test_maintainer_profile_excludes_ignored_packages_from_packages_list():
+    maintainers = {"pypy-feedstock": ["alice"]}
+    maintainer_info = {"alice": _info("alice", "Alice Example")}
+    package_names = {"pypy-feedstock": ["pypy3.8", "pypy3.9", "widget"]}
+    graph = _maintainer_graph([])
+
+    profiles = dict(build_maintainer_profiles(maintainers, maintainer_info, graph, package_names))
+
+    assert profiles["alice"]["packages"] == ["widget"]
 
 
 def test_maintainer_profile_co_maintainers_ranked_by_shared_feedstocks_desc_capped_at_12():
@@ -705,6 +750,33 @@ def test_package_profile_excludes_virtual_packages_from_dependency_lists():
     assert "__glibc" not in profile["notable_dependents"]
 
 
+def test_package_profile_excludes_ignored_packages_from_dependency_lists():
+    package_maintainers = {"numpy": ["alice"], "pypy3.8": ["bob"]}
+    graph = _package_graph(
+        {"numpy": 0.5, "pypy3.8": 0.9, "python": 0.5},
+        [("numpy", "pypy3.8"), ("numpy", "python"), ("pypy3.8", "numpy")],
+    )
+    profile = dict(build_package_profiles(package_maintainers, {}, graph, [], {}))["numpy"]
+
+    assert "pypy3.8" not in profile["direct_dependencies"]
+    assert profile["direct_dependencies"] == ["python"]
+    assert "pypy3.8" not in profile["notable_dependents"]
+
+
+def test_build_package_profiles_generates_no_profile_for_ignored_packages():
+    for name in IGNORED_PACKAGES:
+        package_maintainers = {name: ["alice"], "numpy": ["alice"]}
+        profiles = dict(build_package_profiles(package_maintainers, {}, {}, [], {}))
+        assert name not in profiles
+        assert list(profiles) == ["numpy"]
+
+
+def test_is_ignored_package():
+    for name in IGNORED_PACKAGES:
+        assert is_ignored_package(name)
+    assert not is_ignored_package("numpy")
+
+
 def test_package_profile_absent_from_graph_gets_empty_dependency_lists():
     package_maintainers = {"orphan": ["alice"]}
     profiles = dict(build_package_profiles(package_maintainers, {}, _package_graph({}, []), [], {}))
@@ -747,6 +819,69 @@ def test_package_profile_no_downloads_data_gives_empty_list_and_zero():
 
     assert profile["downloads_monthly"] == []
     assert profile["downloads_last_month"] == 0
+
+
+def test_package_profile_about_null_without_package_about_data():
+    package_maintainers = {"numpy": ["alice"]}
+    profile = dict(build_package_profiles(package_maintainers, {}, _package_graph({}, []), [], {}))[
+        "numpy"
+    ]
+    assert profile["about"] is None
+
+
+def test_package_profile_about_null_when_status_not_found():
+    package_maintainers = {"numpy": ["alice"]}
+    package_about = {"numpy": {"status": "not_found", "fetched_at": "2026-09-26T00:00:00Z"}}
+    profile = dict(
+        build_package_profiles(
+            package_maintainers, {}, _package_graph({}, []), [], {}, package_about=package_about
+        )
+    )["numpy"]
+    assert profile["about"] is None
+
+
+def test_package_profile_about_populated_from_package_about_data():
+    package_maintainers = {"numpy": ["alice"]}
+    package_about = {
+        "numpy": {
+            "status": "found",
+            "version": "2.1.3",
+            "subdir": "noarch",
+            "fetched_at": "2026-09-26T00:00:00Z",
+            "description": "Fundamental package for array computing.",
+            "summary": "NumPy array library",
+            "home": "https://numpy.org",
+            "dev_url": "https://github.com/numpy/numpy",
+            "doc_url": "https://numpy.org/doc/",
+            "recipe_maintainers": ["mattip", "rgommers"],
+        }
+    }
+    profile = dict(
+        build_package_profiles(
+            package_maintainers, {}, _package_graph({}, []), [], {}, package_about=package_about
+        )
+    )["numpy"]
+    assert profile["about"] == {
+        "description": "Fundamental package for array computing.",
+        "summary": "NumPy array library",
+        "home": "https://numpy.org",
+        "dev_url": "https://github.com/numpy/numpy",
+        "doc_url": "https://numpy.org/doc/",
+        "recipe_maintainers": ["mattip", "rgommers"],
+        "version": "2.1.3",
+    }
+
+
+def test_package_profile_about_unaffected_fields_unchanged_when_present():
+    package_maintainers = {"numpy": ["alice", "bob"]}
+    package_about = {"numpy": {"status": "found", "version": "2.1.3"}}
+    profile = dict(
+        build_package_profiles(
+            package_maintainers, {}, _package_graph({}, []), [], {}, package_about=package_about
+        )
+    )["numpy"]
+    assert profile["maintainer_count"] == 2
+    assert profile["direct_dependencies"] == []
 
 
 # ── feedstocks_by_package_name ───────────────────────────────────────────────────────────────
