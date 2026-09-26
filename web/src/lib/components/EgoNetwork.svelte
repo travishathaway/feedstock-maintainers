@@ -9,21 +9,15 @@
 
 	interface Props {
 		login: string;
-		centerLabel: string;
 		egoNetwork: EgoNetwork;
 	}
 
-	let { login, centerLabel, egoNetwork }: Props = $props();
+	let { login, egoNetwork }: Props = $props();
 
 	let container: HTMLDivElement;
 	let sigma: SigmaType | undefined;
 	let error = $state<string | undefined>(undefined);
 	let loading = $state(true);
-	let degree = $state<1 | 2>(1);
-
-	const visibleKeys = $derived(
-		new Set(egoNetwork.nodes.filter((node) => node.distance <= degree).map((node) => node.key))
-	);
 
 	const CENTER_COLOR = '#ef6c00';
 	const ONE_HOP_COLOR = '#00695c';
@@ -51,8 +45,8 @@
 			layoutGraph(graph);
 
 			sigma = new Sigma(graph, container, {
+				enableCameraZooming: false,
 				nodeReducer: (node, attrs) => {
-					if (!visibleKeys.has(node)) return { ...attrs, hidden: true };
 					const distance = attrs.distance as number;
 					return {
 						...attrs,
@@ -62,8 +56,6 @@
 					};
 				},
 				edgeReducer: (edge, attrs) => {
-					const [s, t] = graph.extremities(edge);
-					if (!visibleKeys.has(s) || !visibleKeys.has(t)) return { ...attrs, hidden: true };
 					const size = Math.max(1, Math.log1p((attrs.weight as number) ?? 1));
 					return { ...attrs, size, color: attrs.color ?? '#ccc' };
 				}
@@ -86,48 +78,17 @@
 		}
 	});
 
-	$effect(() => {
-		visibleKeys;
-		sigma?.refresh();
-	});
-
 	onDestroy(() => {
 		sigma?.kill();
 	});
 </script>
 
-<div class="d-flex gap-3 flex-wrap">
-	<div class="flex-shrink-0" style="min-width: 160px;">
-		<span class="form-label small fw-semibold d-block mb-2">Degrees of separation</span>
-		<div class="btn-group btn-group-sm" role="group" aria-label="Degrees of separation">
-			<button
-				type="button"
-				class="btn {degree === 1 ? 'btn-secondary' : 'btn-outline-secondary'}"
-				onclick={() => (degree = 1)}
-			>
-				1
-			</button>
-			<button
-				type="button"
-				class="btn {degree === 2 ? 'btn-secondary' : 'btn-outline-secondary'}"
-				onclick={() => (degree = 2)}
-			>
-				2
-			</button>
-		</div>
-		<p class="small text-secondary mt-2 mb-0">
-			{degree === 1 ? `Direct co-maintainers of ${centerLabel}.` : "Includes co-maintainers' co-maintainers."}
-		</p>
-	</div>
-	<div class="flex-grow-1" style="min-width: 0;">
-		{#if error}
-			<p class="error">{error}</p>
-		{:else if loading}
-			<p class="text-body-secondary small">Loading network…</p>
-		{/if}
-		<div bind:this={container} class="graph-container"></div>
-	</div>
-</div>
+{#if error}
+	<p class="error">{error}</p>
+{:else if loading}
+	<p class="text-body-secondary small">Loading network…</p>
+{/if}
+<div bind:this={container} class="graph-container"></div>
 
 <style>
 	.graph-container {

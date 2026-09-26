@@ -140,7 +140,7 @@
                             rel="noreferrer"
                             class="badge text-bg-secondary text-decoration-none"
                         >
-                            {profile.license}
+                            {profile.license}  &nbsp;<i class="bi bi-box-arrow-up-right"></i>
                         </a>
                     {:else}
                         <span class="badge text-bg-secondary">{profile.license}</span>
@@ -165,7 +165,51 @@
 		</div>
 	</div>
 
-	<div class="d-flex mt-4">
+	<!-- Mobile: condensed table -->
+	<div class="card text-bg-light mt-4 d-md-none">
+		<table class="table table-sm mb-0 align-middle">
+			<tbody>
+				<tr>
+					<td class="text-body-secondary">Maintainers</td>
+					<td class="text-end">
+						<div class="fw-semibold fs-4">{formatNumber(profile.maintainer_count)}</div>
+						{#if profile.active_maintainer_count !== null}
+							<div class="small text-secondary">
+								{formatNumber(profile.active_maintainer_count)} active (12mo)
+							</div>
+						{/if}
+					</td>
+				</tr>
+				<tr>
+					<td class="text-body-secondary">Dependent feedstocks</td>
+					<td class="text-end">
+						<div class="fw-semibold fs-4">
+							{profile.dependent_feedstock_count === null
+								? '—'
+								: formatNumber(profile.dependent_feedstock_count)}
+						</div>
+					</td>
+				</tr>
+				<tr>
+					<td class="text-body-secondary">Direct dependencies</td>
+					<td class="text-end">
+						<div class="fw-semibold fs-4">
+							{formatNumber(liveDirectDependencyCount ?? profile.direct_dependencies.length)}
+						</div>
+					</td>
+				</tr>
+				<tr>
+					<td class="text-body-secondary">Downloads / month</td>
+					<td class="text-end">
+						<div class="fw-semibold fs-4">{formatNumber(profile.downloads_last_month)}</div>
+					</td>
+				</tr>
+			</tbody>
+		</table>
+	</div>
+
+	<!-- Tablet & up: original card row -->
+	<div class="d-none d-md-flex mt-4">
 		<div class="col me-4 card text-bg-light">
 			<div class="card-body">
 				<span class="h3">{formatNumber(profile.maintainer_count)}</span>
@@ -274,7 +318,6 @@
 		<div class="col-lg-6 mb-4">
 			<div class="card text-bg-light h-100">
 				<div class="card-body">
-					<h3 class="h6 mb-3">Dependency tree</h3>
 					<DependencyTree
 						packageName={profile.name}
 						version={selectedVersion}
@@ -292,7 +335,7 @@
 						{#each profile.notable_dependents as dep (dep)}
 							<a
 								href={resolve('/packages/[name]', { name: encodeURIComponent(dep) })}
-								class="badge text-bg-secondary text-decoration-none">{dep}</a
+								class="btn btn-success btn-sm rounded-pill text-decoration-none">{dep}</a
 							>
 						{/each}
 						{#if profile.notable_dependents.length === 0}

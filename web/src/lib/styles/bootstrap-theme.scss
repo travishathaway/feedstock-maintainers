@@ -19,9 +19,18 @@ $primary: #00695c;
 // subtle backgrounds/borders (see $secondary-bg-subtle/$secondary-border-subtle),
 // which lands close to conda-forge's original pale #ebedf0 anyway.
 $secondary: #495057;
-$success: #388e3c;
+// $success and $warning are picked so Bootstrap's auto text-color computation
+// (color-contrast(), which is what actually renders on .btn-success/.btn-warning
+// and .text-bg-success/.text-bg-warning) lands on a comfortable contrast margin
+// rather than barely clearing the 4.5:1 AA minimum. The previous shades (Material
+// Green 700 #388e3c, Orange 800 #ef6c00) technically passed with black text
+// (~5.1:1 and ~6.8:1 respectively) but read as low-contrast in practice.
+// #1b5e20 (Material Green 900) is dark enough that color-contrast() switches to
+// white text, at ~7.9:1 (AAA). #f9a825 (Material Amber 800) keeps black text but
+// raises its contrast to ~10.7:1.
+$success: #1b5e20;
 $info: #1976d2;
-$warning: #ef6c00;
+$warning: #f9a825;
 // $danger: left as Bootstrap default (#dc3545) — no published conda-forge value
 
 // Optional supporting shades reused for hover/active states where useful
@@ -35,5 +44,7 @@ $primary-text-emphasis: #004d40;
 // normal text; this also clears the stricter 7:1 AAA threshold). Kept in
 // sync with $secondary above for a single consistent "muted gray" tone.
 $body-secondary-color: #495057;
+
+$btn-color: #ffffff;
 
 @import 'bootstrap/scss/bootstrap';

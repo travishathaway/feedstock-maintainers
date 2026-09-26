@@ -6,9 +6,17 @@
 	interface Props {
 		node: DependencyTreeNode;
 		depth?: number;
+		controlSignal?: { action: 'expand' | 'collapse' };
 	}
 
-	let { node, depth = 0 }: Props = $props();
+	let { node, depth = 0, controlSignal }: Props = $props();
+
+	let isOpen = $state(depth < 1);
+
+	$effect(() => {
+		if (!controlSignal) return;
+		isOpen = controlSignal.action === 'expand';
+	});
 </script>
 
 {#if node.children.length === 0}
@@ -30,7 +38,7 @@
 		{/if}
 	</div>
 {:else}
-	<details open={depth < 1}>
+	<details bind:open={isOpen}>
 		<summary>
 			<a
 				href={resolve('/packages/[name]', { name: encodeURIComponent(node.name) })}
@@ -39,7 +47,7 @@
 		</summary>
 		<div class="tree-children">
 			{#each node.children as child (child.name)}
-				<Self node={child} depth={depth + 1} />
+				<Self node={child} depth={depth + 1} {controlSignal} />
 			{/each}
 		</div>
 	</details>

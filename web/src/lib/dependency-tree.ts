@@ -71,8 +71,46 @@ function virtualPackagesFor(platform: PlatformOption) {
 	}));
 }
 
+const NON_NOARCH_PLATFORMS = CANDIDATE_PLATFORMS.filter(
+	(platform): platform is Exclude<PlatformOption, 'noarch'> => platform !== 'noarch'
+);
+
+/**
+ * A "noarch" build has no platform of its own, but its dependencies can still
+ * be platform-specific (e.g. a noarch Python package depending on a compiled,
+ * per-platform library). Solving with only the "noarch" subdir starves the
+ * solver of every one of those records and fails. So when the selected
+ * platform *is* noarch, query every real architecture's repodata alongside
+ * noarch, and offer virtual packages for all of them, so whichever
+ * architecture a given dependency actually ships for is resolvable.
+ */
+function virtualPackagesForSelection(platform: PlatformOption) {
+	if (platform !== 'noarch') {
+		return virtualPackagesFor(platform);
+	}
+
+	const byNameAndVersion = new Map<string, ReturnType<typeof virtualPackagesFor>[number]>();
+	for (const arch of NON_NOARCH_PLATFORMS) {
+		for (const pkg of virtualPackagesFor(arch)) {
+			byNameAndVersion.set(`${pkg.packageName}-${pkg.version}`, pkg);
+		}
+	}
+	return [...byNameAndVersion.values()];
+}
+
+// A Gateway caches every repodata record it has fetched, so reusing a single instance across
+// calls (e.g. listing versions, then platforms, for the same package) avoids re-downloading
+// repodata shards that were already fetched for an earlier query.
+let sharedGateway: Gateway | undefined;
+function getGateway(): Gateway {
+	if (!sharedGateway) {
+		sharedGateway = new Gateway();
+	}
+	return sharedGateway;
+}
+
 export async function listAvailableVersions(packageName: string): Promise<string[]> {
-	const gateway = new Gateway();
+	const gateway = getGateway();
 	const records = await gateway.query(DEFAULT_CHANNELS, [...CANDIDATE_PLATFORMS], [packageName]);
 
 	const versions = new Map<string, Version>();
@@ -95,7 +133,7 @@ export async function listAvailablePlatforms(
 	packageName: string,
 	version: string
 ): Promise<PlatformOption[]> {
-	const gateway = new Gateway();
+	const gateway = getGateway();
 	const records = await gateway.query(
 		DEFAULT_CHANNELS,
 		[...CANDIDATE_PLATFORMS],
@@ -114,11 +152,14 @@ export async function solveDependencyTree(
 	version: string,
 	platform: PlatformOption
 ): Promise<DependencyTreeResult> {
+	const subdirs: PlatformOption[] =
+		platform === 'noarch' ? [...CANDIDATE_PLATFORMS] : [platform, 'noarch'];
+
 	const solved = await simpleSolve(
 		[`${packageName}=${version}`],
 		DEFAULT_CHANNELS,
-		[platform, 'noarch'],
-		virtualPackagesFor(platform)
+		subdirs,
+		virtualPackagesForSelection(platform)
 	);
 
 	const byName = new Map<string, SolvedPackage>();
