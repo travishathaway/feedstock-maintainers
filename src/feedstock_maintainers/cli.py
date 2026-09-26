@@ -24,7 +24,7 @@ from rich.progress import (
 )
 from rich.table import Table
 
-from . import activity, feedstock_tiers
+from . import activity, bigquery_activity, feedstock_tiers
 from . import feedstock_count_history as fch
 from .cache import RecipeCache
 from .github import (
@@ -1152,6 +1152,157 @@ def fetch_feedstock_activity(
     store.flush()
 
     console.print(f"[green]Done.[/] Activity for {len(todo)} feedstocks written to {output}")
+
+
+def _bigquery_client(project: str):
+    from google.cloud import bigquery
+
+    return bigquery.Client(project=project)
+
+
+def _bigquery_dry_run_bytes(client, query: str) -> int:
+    from google.cloud import bigquery
+
+    job_config = bigquery.QueryJobConfig(dry_run=True, use_query_cache=False)
+    job = client.query(query, job_config=job_config)
+    return job.total_bytes_processed
+
+
+def _bigquery_execute(client, query: str, maximum_bytes_billed: int):
+    from google.cloud import bigquery
+
+    job_config = bigquery.QueryJobConfig(maximum_bytes_billed=maximum_bytes_billed)
+    return client.query(query, job_config=job_config).result()
+
+
+@fetch.command("feedstock-activity-bq")
+@click.option(
+    "--start-date",
+    type=click.DateTime(formats=["%Y-%m-%d"]),
+    default=None,
+    help="Earliest merged-PR date to include, inclusive. Defaults to 365 days before --end-date.",
+)
+@click.option(
+    "--end-date",
+    type=click.DateTime(formats=["%Y-%m-%d"]),
+    default=None,
+    help="Latest merged-PR date to include, inclusive. Defaults to today.",
+)
+@click.option(
+    "--project",
+    envvar="GOOGLE_CLOUD_PROJECT",
+    default=None,
+    help="GCP project to bill the query job to. Required -- BigQuery bills query jobs to a "
+    "project even when the data scanned falls entirely inside the free tier.",
+)
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=Path("feedstock-activity-raw.json"),
+    show_default=True,
+    help="Raw activity store file to merge results into -- the same file/format `fetch "
+    "feedstock-activity` writes, so `generate feedstock-activity` can consume either "
+    "unchanged, and results from both fetch paths can coexist for different feedstocks.",
+)
+@click.option(
+    "--dry-run/--execute",
+    default=True,
+    show_default=True,
+    help="Dry run (default): report the estimated bytes scanned and cost, then exit without "
+    "running the query or writing anything -- dry runs are always free, regardless of how much "
+    "the real query would scan. --execute actually runs the query (incurring real cost/quota "
+    "usage) and merges results into --output.",
+)
+@click.option(
+    "--free-tier-tebibytes",
+    type=float,
+    default=1.0,
+    show_default=True,
+    help="BigQuery's on-demand monthly free scan allowance, in TiB, used only to estimate cost "
+    "locally -- this is shared across every query in the billing project that month, not "
+    "per-query, so this estimate is only accurate for the first query run in a given month. "
+    "Confirm the current allowance at https://cloud.google.com/bigquery/pricing.",
+)
+@click.option(
+    "--usd-per-tebibyte",
+    type=float,
+    default=6.25,
+    show_default=True,
+    help="On-demand price per TiB scanned beyond the free tier. Confirm the current rate at "
+    "https://cloud.google.com/bigquery/pricing -- it has changed before and may again.",
+)
+def fetch_feedstock_activity_bq(
+    start_date: datetime | None,
+    end_date: datetime | None,
+    project: str | None,
+    output: Path,
+    dry_run: bool,
+    free_tier_tebibytes: float,
+    usd_per_tebibyte: float,
+) -> None:
+    """Prototype (issue #3): fetch merged-PR activity for feedstocks in one query against the
+    public `githubarchive` BigQuery dataset, instead of `fetch feedstock-activity`'s
+    one-GraphQL-request-per-feedstock approach -- the reason that command is restricted to the
+    "top" tier. Matches on `repo:conda-forge/*-feedstock` directly, so unlike the GraphQL path
+    this is not restricted to a tier at all: it fetches every feedstock in one query, at the same
+    bytes-scanned cost as fetching just one (see `bigquery_activity.py`'s module docstring for
+    why -- the cost driver is the date range scanned, not the number of feedstocks matched).
+
+    Requires the google-cloud-bigquery package and a GCP project with billing enabled. Reports
+    the estimated bytes scanned/cost and exits without querying by default; pass --execute to
+    actually run it.
+    """
+    console = Console()
+
+    if project is None:
+        raise click.ClickException(
+            "--project (or $GOOGLE_CLOUD_PROJECT) is required -- BigQuery bills query jobs to a "
+            "GCP project even when the data scanned is free."
+        )
+
+    end = (end_date or datetime.now(timezone.utc)).date()
+    start = start_date.date() if start_date else end - timedelta(days=365)
+
+    query = bigquery_activity.build_activity_query(start, end)
+    console.print(f"Querying merged conda-forge feedstock PRs from {start} through {end}")
+
+    client = _bigquery_client(project)
+    bytes_processed = _bigquery_dry_run_bytes(client, query)
+    free_tier_bytes = int(free_tier_tebibytes * 1024**4)
+    tebibytes_processed = bytes_processed / 1024**4
+
+    console.print(f"Estimated bytes scanned: {bytes_processed:,} ({tebibytes_processed:.3f} TiB)")
+    if bytes_processed <= free_tier_bytes:
+        console.print(
+            "[green]Within the free tier[/] (shared across every query in this project this "
+            "month -- not a guarantee if other queries already used some of it)"
+        )
+    else:
+        estimated_cost = bigquery_activity.estimate_cost_usd(
+            bytes_processed, free_tier_bytes, usd_per_tebibyte
+        )
+        over_by = tebibytes_processed - free_tier_tebibytes
+        console.print(
+            f"[yellow]Exceeds the free tier by {over_by:.3f} TiB[/] -- "
+            f"estimated cost: ${estimated_cost:.2f} at ${usd_per_tebibyte:g}/TiB"
+        )
+
+    if dry_run:
+        console.print(f"[green]Dry run only.[/] Pass --execute to run this and merge into {output}")
+        return
+
+    rows = _bigquery_execute(client, query, maximum_bytes_billed=bytes_processed)
+    events_by_feedstock = bigquery_activity.rows_to_events(rows)
+
+    store = activity.ActivityStore(output)
+    for feedstock, events in events_by_feedstock.items():
+        store.record(feedstock, tier="bigquery", events=events, bot_merged_count=0)
+    store.flush()
+
+    console.print(
+        f"[green]Done.[/] Activity for {len(events_by_feedstock)} feedstocks merged into {output}"
+    )
 
 
 @main.group()

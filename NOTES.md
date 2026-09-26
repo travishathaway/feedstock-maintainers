@@ -47,3 +47,28 @@ per package?"
 I also want to begin working on the website itself because that's going to be an important part of presenting the
 data. I'm going to go ahead and just use the conda-forge.org website itself as a style guide. It will also help if
 we ever want this project to be more closely integrated into it.
+
+## 2026-09-20
+
+I've got a pretty okay draft of what the dashboard could like at this point.
+
+## 2026-09-26
+
+### BigQuery `githubarchive` investigation (issue #3)
+
+Prototyped querying the public `githubarchive` BigQuery dataset as a replacement for
+`fetch feedstock-activity`'s per-feedstock GraphQL calls (`bigquery_activity.py` +
+`fsm fetch feedstock-activity-bq`). The key thing I hadn't appreciated going in: BigQuery bills
+for a referenced column's bytes across *every* row in the scanned partitions, not just the rows
+that survive a `WHERE` filter -- so `WHERE repo.name LIKE 'conda-forge/%-feedstock'` doesn't
+reduce the bytes scanned at all, only which rows come *back*. That means the marginal cost of
+covering all ~29k feedstocks instead of just the "top" tier is zero -- the query already pays to
+scan all of GitHub's public activity for the date range regardless of how many repos it matches.
+The only real cost lever is the date range.
+
+That also means a full historical backfill (matching `generate feedstock-activity`'s 12-month
+window) blows well past the 1 TiB/month free tier, since it has to scan `payload` (the only
+column with merge/author/reviewer detail) across a year of *all* public GitHub activity, not just
+conda-forge's. But a *recurring* refresh that only scans new days since the last run (the same
+`--since` incremental pattern `fetch feedstocks`/`fetch feedstock-activity` already use) stays
+within it. Full writeup posted as a comment on #3.
