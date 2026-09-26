@@ -5,9 +5,7 @@ from __future__ import annotations
 import json
 
 import networkx as nx
-import pytest
 
-from feedstock_maintainers import graph_data
 from feedstock_maintainers.graph_data import (
     build_package_graph,
     find_transitive_only_dependencies,
@@ -127,12 +125,7 @@ def test_all_nodes_have_metric_keys_present():
 
     graph = build_package_graph([repodata])
 
-    expected_keys = {
-        "in_degree_centrality",
-        "out_degree_centrality",
-        "betweenness_centrality",
-        "pagerank",
-    }
+    expected_keys = {"pagerank"}
     for _, attrs in graph.nodes(data=True):
         assert expected_keys <= attrs.keys()
 
@@ -148,72 +141,15 @@ def test_hand_computable_metrics_on_small_star_graph():
 
     graph = build_package_graph([repodata])
 
-    for dependent in ("a", "b", "c"):
-        assert graph.nodes[dependent]["in_degree_centrality"] == 0.0
-    assert graph.nodes["d"]["out_degree_centrality"] == 0.0
-    assert graph.nodes["d"]["in_degree_centrality"] > graph.nodes["a"]["in_degree_centrality"]
     assert graph.nodes["d"]["pagerank"] > graph.nodes["a"]["pagerank"]
 
 
-def test_bridge_node_has_higher_betweenness_than_endpoints():
-    repodata = _repodata(
-        packages_conda={
-            "a-1.0-0.conda": _artifact("a", ["b"]),
-            "b-1.0-0.conda": _artifact("b", ["c"]),
-        }
-    )
-
-    graph = build_package_graph([repodata])
-
-    assert graph.nodes["b"]["betweenness_centrality"] > graph.nodes["a"]["betweenness_centrality"]
-    assert graph.nodes["b"]["betweenness_centrality"] > graph.nodes["c"]["betweenness_centrality"]
-
-
-def test_isolated_node_gets_zero_valued_metrics():
+def test_isolated_node_gets_pagerank_of_one():
     repodata = _repodata(packages_conda={"lonely-1.0-0.conda": _artifact("lonely")})
 
     graph = build_package_graph([repodata])
 
-    assert graph.nodes["lonely"]["in_degree_centrality"] == 0.0
-    assert graph.nodes["lonely"]["out_degree_centrality"] == 0.0
-    assert graph.nodes["lonely"]["betweenness_centrality"] == 0.0
     assert graph.nodes["lonely"]["pagerank"] == 1.0
-
-
-def test_betweenness_falls_back_to_sampled_computation_above_threshold(monkeypatch):
-    monkeypatch.setattr(graph_data, "_BETWEENNESS_EXACT_NODE_LIMIT", 3)
-    monkeypatch.setattr(graph_data, "_BETWEENNESS_SAMPLE_SIZE", 2)
-
-    repodata = _repodata(
-        packages_conda={
-            "a-1.0-0.conda": _artifact("a", ["b"]),
-            "b-1.0-0.conda": _artifact("b", ["c"]),
-            "c-1.0-0.conda": _artifact("c", ["d"]),
-            "d-1.0-0.conda": _artifact("d", ["e"]),
-        }
-    )
-
-    graph = build_package_graph([repodata])
-
-    assert graph.number_of_nodes() == 5
-    for _, attrs in graph.nodes(data=True):
-        assert isinstance(attrs["betweenness_centrality"], float)
-        assert attrs["betweenness_centrality"] >= 0.0
-
-
-def test_betweenness_is_exact_below_threshold():
-    repodata = _repodata(
-        packages_conda={
-            "a-1.0-0.conda": _artifact("a", ["b"]),
-            "b-1.0-0.conda": _artifact("b", ["c"]),
-        }
-    )
-
-    graph = build_package_graph([repodata])
-    expected = nx.betweenness_centrality(graph, weight="weight")
-
-    for node, value in expected.items():
-        assert graph.nodes[node]["betweenness_centrality"] == pytest.approx(value)
 
 
 def test_package_graph_to_json_shape():

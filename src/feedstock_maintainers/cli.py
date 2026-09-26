@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import shutil
+from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -46,6 +47,7 @@ from .graph_data import (
     package_graph_to_json,
 )
 from .maintainer_history import append_current_point, run_backfill
+from .package_about import fetch_package_about
 from .package_downloads import (
     PackageDownloadsFetchError,
     fetch_monthly_downloads,
@@ -313,6 +315,44 @@ async def _run_fetch_package_downloads(
             cache_dir=cache_dir,
             force=force,
             on_progress=on_progress,
+        )
+
+
+async def _run_fetch_package_about(
+    package_names: list[str],
+    repodata_by_platform: dict[str, dict],
+    existing: dict[str, dict],
+    force: bool,
+    concurrency: int,
+    output: Path,
+    flush_every: int,
+    console: Console,
+) -> dict[str, dict]:
+    with Progress(
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TimeRemainingColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task("Fetching package about.json metadata", total=None)
+
+        def on_progress(done: int, total: int) -> None:
+            progress.update(task, completed=done, total=total)
+
+        return await fetch_package_about(
+            package_names,
+            repodata_by_platform,
+            existing,
+            force,
+            concurrency,
+            on_progress=on_progress,
+            # Periodically write partial progress to --output (the same file this run started
+            # from) so a crash or interruption partway through a large run -- e.g. one bad
+            # package's about.json triggering an unexpected error -- doesn't lose everything
+            # already fetched; the next run resumes from whatever was last flushed.
+            on_flush=lambda partial: _atomic_write(output, partial),
+            flush_every=flush_every,
         )
 
 
@@ -945,6 +985,116 @@ def fetch_package_downloads(
     console.print(f"[green]Done.[/] {len(result)} packages written to {output}")
     if missing:
         console.print(f"[yellow]{missing}[/] month(s) had no data published yet (skipped)")
+
+
+@fetch.command("package-about")
+@click.option(
+    "--package-maintainers-file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path("package-maintainers.json"),
+    show_default=True,
+    help="Path to the package -> maintainers JSON file (as produced by `generate "
+    "package-maintainers`) -- its keys are exactly the set of packages that get a profile page "
+    "(see `generate site-data`), so this enumerates every package worth fetching about.json for.",
+)
+@click.option(
+    "--platform",
+    "-p",
+    "platforms",
+    multiple=True,
+    default=("noarch", "linux-64"),
+    show_default=True,
+    help="Representative platform subdirs to search for each package's latest build, in "
+    "preference order (noarch preferred, first remaining platform used otherwise). Repeat for "
+    "multiple platforms.",
+)
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=Path("package-about.json"),
+    show_default=True,
+    help="Path to write per-package about.json metadata (also doubles as the incremental-fetch "
+    "manifest -- see --force).",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Re-fetch every package regardless of manifest state (default: only never-fetched, "
+    "errored, or version-changed packages -- see `package_about.should_fetch_about`).",
+)
+@click.option(
+    "--concurrency",
+    type=int,
+    default=25,
+    show_default=True,
+    help="Number of concurrent about.json fetches.",
+)
+@click.option(
+    "--flush-every",
+    type=int,
+    default=25,
+    show_default=True,
+    help="Write --output to disk after this many packages complete (found, not found, or "
+    "errored), so an interrupted or crashed run doesn't lose progress already made -- the next "
+    "run resumes from whatever was last written instead of starting over.",
+)
+@click.option(
+    "--timeout",
+    type=float,
+    default=300.0,
+    show_default=True,
+    help="Per-platform repodata download timeout in seconds.",
+)
+def fetch_package_about_cmd(
+    package_maintainers_file: Path,
+    platforms: tuple[str, ...],
+    output: Path,
+    force: bool,
+    concurrency: int,
+    flush_every: int,
+    timeout: float,
+) -> None:
+    """Fetch info/about.json metadata (description, home, dev_url, doc_url, summary,
+    recipe-maintainers) for the latest version of every package, streamed directly from
+    conda.anaconda.org via py-rattler -- no full package download needed.
+
+    Only the latest version of each package is fetched, using a single representative platform
+    build per version (see --platform). A package whose latest version hasn't changed since the
+    last run is skipped entirely; pass --force to re-fetch everything.
+    """
+    console = Console()
+
+    package_names = sorted(json.loads(package_maintainers_file.read_text(encoding="utf-8")))
+    existing = _load_json_if_exists(output, console, "every package will be fetched fresh")
+
+    try:
+        repodata_by_platform = asyncio.run(_run_fetch_repodata(list(platforms), console, timeout))
+    except RepodataFetchError as exc:
+        raise click.ClickException(str(exc)) from None
+
+    result = asyncio.run(
+        _run_fetch_package_about(
+            package_names,
+            repodata_by_platform,
+            existing,
+            force,
+            concurrency,
+            output,
+            flush_every,
+            console,
+        )
+    )
+
+    # No final _atomic_write(output, result) needed here -- _run_fetch_package_about's on_flush
+    # callback already wrote this exact `result` to `output` once more just before returning.
+    counts = Counter(entry["status"] for entry in result.values())
+    console.print(f"[green]Done.[/] {len(result)} package(s) written to {output}")
+    console.print(
+        f"  {counts.get('found', 0)} found, {counts.get('not_found', 0)} not found, "
+        f"{counts.get('error', 0)} errored (will retry next run)"
+    )
 
 
 @fetch.command("feedstock-activity")
@@ -1924,6 +2074,15 @@ def generate_feedstock_activity(
     "active_maintainer_count: null for every package (no activity data collected, not zero).",
 )
 @click.option(
+    "--package-about-file",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=Path("package-about.json"),
+    show_default=True,
+    help="Path to per-package about.json metadata (as produced by `fetch package-about`). Skipped "
+    "with a warning (not an error) if it doesn't exist yet -- package profiles then have "
+    "about: null for every package.",
+)
+@click.option(
     "--maintainer-history-file",
     type=click.Path(dir_okay=False, path_type=Path),
     default=Path("maintainer-history.json"),
@@ -1961,6 +2120,7 @@ def generate_site_data(
     transitive_dependencies_file: Path,
     license_file: Path,
     feedstock_activity_file: Path,
+    package_about_file: Path,
     maintainer_history_file: Path,
     feedstock_count_history_file: Path,
     output_dir: Path,
@@ -1998,6 +2158,9 @@ def generate_site_data(
     feedstock_activity_data = _load_json_if_exists(
         feedstock_activity_file, console, "package profiles will have active_maintainer_count: null"
     ).get("feedstocks", {})
+    package_about_data = _load_json_if_exists(
+        package_about_file, console, "package profiles will have about: null"
+    )
 
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -2045,6 +2208,7 @@ def generate_site_data(
         package_names_data,
         licenses_data,
         feedstock_activity_data,
+        package_about_data,
     ):
         package_names_list.append(name)
         _write_json_fast(packages_dir / f"{name}.json", profile)

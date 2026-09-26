@@ -27,6 +27,12 @@ the already-parsed contents of the root `*.json` artifacts:
     design -- a feedstock absent from it means "no activity data collected", not "zero active
     maintainers"; every function here distinguishes that `None` from an explicit `0` (see
     `compute_status`, `active_maintainer_count_for_feedstocks`).
+  - `package-about.json` (as produced by `fetch package-about`, see `package_about.py`):
+    {package_name: {status, version, description, summary, home, dev_url, doc_url,
+    recipe_maintainers, ...}} -- `info/about.json` metadata for each package's latest version,
+    streamed directly from its conda-forge archive via py-rattler. Optional -- a package missing
+    from it, or present with `status` other than `"found"`, just means its profile's `about` field
+    is `None`, not an error.
 
 Design decisions worth calling out (kept consistent across every output so the same number never
 looks different on two pages):
@@ -47,6 +53,11 @@ looks different on two pages):
     `transitive_dependencies`, and a package's own `direct_dependencies`/`notable_dependents`)
     since otherwise they'd dominate rankings (e.g. "__glibc" outranks every real package by
     transitive dependents) or show up as an unlinkable, meaningless dependency chip.
+  - `IGNORED_PACKAGES` (currently obsolete PyPy pins) are, unlike virtual packages, real
+    feedstock-built packages that *do* appear in `package-maintainers.json`/`package-names.json`
+    with real maintainers -- they're dropped explicitly (see `is_ignored_package`) everywhere a
+    package name could otherwise surface: overview rankings, a package's own profile (none is
+    generated), its dependency/dependent chip lists, and a maintainer's `packages` list.
 """
 
 from __future__ import annotations
@@ -70,6 +81,12 @@ _NOTABLE_DEPENDENTS_LIMIT = 8
 
 _FEEDSTOCK_URL_TEMPLATE = "https://github.com/conda-forge/{feedstock}-feedstock"
 
+# Real, feedstock-built packages that are nonetheless excluded from every output here -- unlike
+# conda's virtual packages (see `is_virtual_package`), these do have maintainers and would
+# otherwise show up in rankings, profile pages, and dependency/dependent chip lists. Currently:
+# obsolete PyPy pins with no ongoing maintenance relevance to the site.
+IGNORED_PACKAGES = frozenset({"pypy3.6", "pypy3.7", "pypy3.8", "pypy3.9"})
+
 
 def is_team_handle(login: str) -> bool:
     """A maintainer login is a team handle (e.g. "conda-forge/go"), not an individual user, iff
@@ -82,6 +99,12 @@ def is_virtual_package(name: str) -> bool:
     "__unix", "__win") are conventionally named with a leading "__" and never correspond to a
     real, feedstock-built package."""
     return name.startswith("__")
+
+
+def is_ignored_package(name: str) -> bool:
+    """`name` is in `IGNORED_PACKAGES` -- a real package deliberately excluded from every output
+    here (see `IGNORED_PACKAGES`), as opposed to `is_virtual_package`'s conda-internal markers."""
+    return name in IGNORED_PACKAGES
 
 
 def team_handles(logins: Iterable[str]) -> set[str]:
@@ -184,6 +207,9 @@ def compute_maintainer_overview(
     generated_at: str,
 ) -> dict[str, Any]:
     """Build the home page's `maintainer-overview.json` payload."""
+    package_maintainers = {
+        name: logins for name, logins in package_maintainers.items() if not is_ignored_package(name)
+    }
     package_downloads = normalize_package_downloads(package_downloads)
     all_logins = {login for names in maintainers.values() for login in names}
     handles = team_handles(all_logins)
@@ -273,6 +299,9 @@ def compute_package_overview(
     generated_at: str,
 ) -> dict[str, Any]:
     """Build the packages page's `package-overview.json` payload."""
+    package_maintainers = {
+        name: logins for name, logins in package_maintainers.items() if not is_ignored_package(name)
+    }
     package_downloads = normalize_package_downloads(package_downloads)
     package_count = len(package_maintainers)
 
@@ -453,7 +482,7 @@ def build_maintainer_profile(
     packages: set[str] = set()
     for feedstock in feedstocks:
         effective_names = package_names.get(feedstock) or [feedstock]
-        packages.update(effective_names)
+        packages.update(name for name in effective_names if not is_ignored_package(name))
 
     edges = sorted(
         maintainer_graph_adjacency.get(login, []),
@@ -578,6 +607,7 @@ def build_package_profile(
     feedstocks: list[str],
     license: str | None,
     feedstock_activity: dict[str, dict] | None = None,
+    package_about: dict[str, dict] | None = None,
 ) -> dict[str, Any]:
     """Build one `packages/<name>.json` payload. `normalized_package_downloads` must already be
     the output of `normalize_package_downloads`. `feedstocks` is the (sorted, non-empty) list of
@@ -585,7 +615,9 @@ def build_package_profile(
     the declared license of the first of them that has one, or `None`. `feedstock_activity` is the
     optional `"feedstocks"` sub-object of `feedstock-activity.json` (see `activity.py`); omitting
     it (or a package whose feedstock(s) aren't covered) just means `active_maintainer_count` is
-    `None`, not an error."""
+    `None`, not an error. `package_about` is the optional `package-about.json` contents (see
+    `package_about.py`); omitting it (or a package missing/not `status: "found"` within it) just
+    means `about` is `None`."""
     handles = team_handles(maintainer_logins)
     maintainer_count = len([login for login in maintainer_logins if login not in handles])
     maintainers = [
@@ -598,10 +630,13 @@ def build_package_profile(
         transitive_record["transitive_dependents"] if transitive_record else None
     )
 
-    # Virtual packages (see module docstring) are excluded from both lists -- they have no
-    # profile page to link to and aren't meaningful "dependencies"/"dependents" to a reader.
+    # Virtual packages (see module docstring) and IGNORED_PACKAGES are excluded from both lists --
+    # they have no profile page to link to and aren't meaningful "dependencies"/"dependents" to a
+    # reader.
     direct_dependencies = sorted(
-        dep for dep in successors.get(name, []) if not is_virtual_package(dep)
+        dep
+        for dep in successors.get(name, [])
+        if not is_virtual_package(dep) and not is_ignored_package(dep)
     )
     notable_dependents = [
         dependent
@@ -609,7 +644,7 @@ def build_package_profile(
             (
                 (dep, pagerank_by_name.get(dep, 0.0))
                 for dep in predecessors.get(name, [])
-                if not is_virtual_package(dep)
+                if not is_virtual_package(dep) and not is_ignored_package(dep)
             ),
             key=lambda pair: (-pair[1], pair[0]),
         )[:_NOTABLE_DEPENDENTS_LIMIT]
@@ -628,6 +663,21 @@ def build_package_profile(
 
     active_maintainer_count = active_maintainer_count_for_feedstocks(feedstocks, feedstock_activity)
 
+    about_record = (package_about or {}).get(name)
+    about = (
+        {
+            "description": about_record.get("description"),
+            "summary": about_record.get("summary"),
+            "home": about_record.get("home"),
+            "dev_url": about_record.get("dev_url"),
+            "doc_url": about_record.get("doc_url"),
+            "recipe_maintainers": about_record.get("recipe_maintainers", []),
+            "version": about_record.get("version"),
+        }
+        if about_record and about_record.get("status") == "found"
+        else None
+    )
+
     return {
         "name": name,
         "maintainers": maintainers,
@@ -641,6 +691,7 @@ def build_package_profile(
         "status": compute_status(maintainer_count, active_maintainer_count),
         "feedstocks": feedstock_links,
         "license": license,
+        "about": about,
     }
 
 
@@ -653,17 +704,21 @@ def build_package_profiles(
     package_names: dict[str, list[str]] | None = None,
     licenses: dict[str, str] | None = None,
     feedstock_activity: dict[str, dict] | None = None,
+    package_about: dict[str, dict] | None = None,
 ) -> Iterator[tuple[str, dict[str, Any]]]:
-    """Yield `(name, profile)` for every package in `package_maintainers` (sorted) -- exactly the
-    names `packages/index.json` should list.
+    """Yield `(name, profile)` for every package in `package_maintainers` (sorted), excluding
+    `IGNORED_PACKAGES` -- exactly the names `packages/index.json` should list.
 
     `package_names` (as produced by `generate maintainers --package-names-output`), `licenses` (as
-    produced by `generate maintainers --license-output`), and `feedstock_activity` (the
-    `"feedstocks"` sub-object of `feedstock-activity.json`, see `activity.py`) are all optional --
-    omitting them (or passing feedstocks/names they don't cover) just means the resulting
-    profile(s) have no known feedstock link, license, or `active_maintainer_count`, rather than
-    raising.
+    produced by `generate maintainers --license-output`), `feedstock_activity` (the `"feedstocks"`
+    sub-object of `feedstock-activity.json`, see `activity.py`), and `package_about` (the contents
+    of `package-about.json`, see `package_about.py`) are all optional -- omitting them (or passing
+    feedstocks/names/packages they don't cover) just means the resulting profile(s) have no known
+    feedstock link, license, `active_maintainer_count`, or `about`, rather than raising.
     """
+    package_maintainers = {
+        name: logins for name, logins in package_maintainers.items() if not is_ignored_package(name)
+    }
     successors, predecessors, pagerank_by_name = _package_graph_indices(package_graph)
     transitive_by_name = {record["name"]: record for record in transitive_dependency_records}
     normalized_package_downloads = normalize_package_downloads(package_downloads)
@@ -686,5 +741,6 @@ def build_package_profiles(
                 feedstocks,
                 license,
                 feedstock_activity,
+                package_about,
             ),
         )

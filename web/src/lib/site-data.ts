@@ -110,6 +110,16 @@ export interface DownloadsMonthlyPoint {
 	downloads: number;
 }
 
+export interface PackageAbout {
+	description: string | null;
+	summary: string | null;
+	home: string | null;
+	dev_url: string | null;
+	doc_url: string | null;
+	recipe_maintainers: string[];
+	version: string;
+}
+
 export interface PackageProfile {
 	name: string;
 	maintainers: PackageMaintainer[];
@@ -126,6 +136,7 @@ export interface PackageProfile {
 	status: PackageStatus;
 	feedstocks: FeedstockLink[];
 	license: string | null;
+	about: PackageAbout | null;
 }
 
 function resolveDataUrl(path: string): string {
