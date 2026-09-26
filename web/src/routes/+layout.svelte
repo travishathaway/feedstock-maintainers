@@ -75,7 +75,7 @@
 			target="_blank"
 			rel="noreferrer"
 		>
-			<i class="bi bi-github"></i><span class="d-none d-sm-inline"> View on GitHub</span>
+			<i class="bi bi-github"></i><span class="d-none d-sm-inline">  &nbsp;View on GitHub</span>
 		</a>
 		<a
 			class="btn btn-outline-secondary btn-sm ms-2 flex-shrink-0"
@@ -83,7 +83,7 @@
 			target="_blank"
 			rel="noreferrer"
 		>
-			<i class="bi bi-box-arrow-up-right"></i><span class="d-none d-sm-inline"> conda-forge.org</span>
+			<i class="bi bi-box-arrow-up-right"></i><span class="d-none d-sm-inline">  &nbsp;conda-forge.org</span>
 		</a>
 	</nav>
 

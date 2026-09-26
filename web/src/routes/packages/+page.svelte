@@ -58,7 +58,55 @@
 {:else if loading}
 	<p class="text-body-secondary">Loading package statistics…</p>
 {:else if overview}
-	<div class="d-flex mt-4">
+	<!-- Mobile: condensed table -->
+	<div class="card text-bg-light mt-4 d-md-none">
+		<table class="table table-sm mb-0 align-middle">
+			<tbody>
+				<tr>
+					<td class="text-body-secondary">Total packages</td>
+					<td class="text-end">
+						<div class="fw-semibold fs-4">{formatNumber(overview.stats.package_count)}</div>
+						<div class="small text-secondary">Live feedstocks on conda-forge</div>
+					</td>
+				</tr>
+				<tr>
+					<td class="text-body-secondary">Packages with ≤2 maintainers</td>
+					<td class="text-end">
+						<div class="fw-semibold fs-4">
+							{formatNumber(overview.stats.packages_le2_maintainers_count)}
+						</div>
+						<span class="badge text-bg-warning"
+							>{formatPercent(overview.stats.packages_le2_maintainers_pct)} of all packages</span
+						>
+					</td>
+				</tr>
+				<tr>
+					<td class="text-body-secondary">Most depended-on package</td>
+					<td class="text-end">
+						{#if overview.stats.most_depended_on}
+							<div class="fw-semibold fs-5">
+								<a
+									href={resolve('/packages/[name]', {
+										name: encodeURIComponent(overview.stats.most_depended_on.name)
+									})}>{overview.stats.most_depended_on.name}</a
+								>
+							</div>
+							<div class="small text-secondary">
+								{formatNumber(overview.stats.most_depended_on.transitive_dependents)} feedstocks · {formatNumber(
+									overview.stats.most_depended_on.maintainer_count
+								)} maintainers
+							</div>
+						{:else}
+							<div class="fw-semibold fs-4">—</div>
+						{/if}
+					</td>
+				</tr>
+			</tbody>
+		</table>
+	</div>
+
+	<!-- Tablet & up: original card row -->
+	<div class="d-none d-md-flex mt-4">
 		<div class="col me-4 card text-bg-light">
 			<div class="card-body">
 				<span class="h3">{formatNumber(overview.stats.package_count)}</span>

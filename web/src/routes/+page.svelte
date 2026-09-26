@@ -36,7 +36,54 @@
 {:else if loading}
 	<p class="text-body-secondary">Loading maintainer statistics…</p>
 {:else if overview}
-	<div class="d-flex mt-4">
+	<!-- Mobile: condensed table -->
+	<div class="card text-bg-light mt-4 d-md-none">
+		<table class="table table-sm mb-0 align-middle">
+			<tbody>
+				<tr>
+					<td class="text-body-secondary">Maintainers</td>
+					<td class="text-end">
+						<div class="fw-semibold fs-4">{formatNumber(overview.stats.maintainer_count)}</div>
+						<div class="small text-secondary">
+							Across {formatNumber(overview.stats.feedstock_count)} feedstocks
+						</div>
+					</td>
+				</tr>
+				<tr>
+					<td class="text-body-secondary">Feedstocks</td>
+					<td class="text-end">
+						<div class="fw-semibold fs-4">{formatNumber(overview.stats.feedstock_count)}</div>
+						<div class="small text-secondary">Live feedstocks on conda-forge</div>
+					</td>
+				</tr>
+				<tr>
+					<td class="text-body-secondary">Average maintainers per feedstock</td>
+					<td class="text-end">
+						<div class="fw-semibold fs-4">
+							{formatNumber(overview.stats.avg_maintainers_per_feedstock)}
+						</div>
+						<div class="small text-secondary">
+							Median is {formatNumber(overview.stats.median_maintainers_per_feedstock)}
+						</div>
+					</td>
+				</tr>
+				<tr>
+					<td class="text-body-secondary">Single maintainer feedstocks</td>
+					<td class="text-end">
+						<div class="fw-semibold fs-4">
+							{formatNumber(overview.stats.single_maintainer_feedstock_count)}
+						</div>
+						<span class="badge text-bg-warning"
+							>{formatPercent(overview.stats.single_maintainer_feedstock_pct)} of all feedstocks</span
+						>
+					</td>
+				</tr>
+			</tbody>
+		</table>
+	</div>
+
+	<!-- Tablet & up: original card row -->
+	<div class="d-none d-md-flex mt-4">
 		<div class="col me-4 card text-bg-light">
 			<div class="card-body">
 				<span class="h3">{formatNumber(overview.stats.maintainer_count)}</span>
@@ -73,7 +120,7 @@
 		</div>
 	</div>
 
-	<div class="d-flex mt-5 mb-5 ps-5 pe-5" style="min-height: 300px;">
+	<div class="d-flex mt-5 mb-5 ps-5 pe-5" style="max-height: 300px;">
 		<div class="col">
 			<h3 class="mb-3">Maintainer growth since 2016</h3>
 			<FeedstockCountChart />
