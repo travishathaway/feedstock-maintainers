@@ -105,6 +105,7 @@ jobs:
 
           pixi run fsm generate maintainers
           pixi run fsm fetch maintainer-info --maintainers-file maintainers.json
+          pixi run fsm generate maintainer-countries
           pixi run fsm generate maintainer-graph --output maintainer-graph.json
           pixi run fsm generate package-maintainers
           pixi run fsm generate package-graph -p linux-64 -p noarch --output package-graph.json
@@ -174,6 +175,7 @@ jobs:
             maintainers.json \
             maintainers-not-found.json \
             maintainer-info.json \
+            maintainer-countries.json \
             maintainer-graph.json \
             package-graph.json \
             package-names.json \

@@ -6,14 +6,14 @@ import json
 
 from click.testing import CliRunner
 
-from feedstock_maintainers import cli as cli_module
 from feedstock_maintainers import package_downloads as pd_module
+from feedstock_maintainers.cli import fetch as fetch_module
 from feedstock_maintainers.cli import main
 from feedstock_maintainers.github import FetchError
 
 
 def _patch_fetch_gitmodules(monkeypatch, text):
-    monkeypatch.setattr(cli_module, "fetch_gitmodules", lambda: text)
+    monkeypatch.setattr(fetch_module, "fetch_gitmodules", lambda: text)
 
 
 def _gitmodules_text(*names: str) -> str:
@@ -65,7 +65,7 @@ def test_fetch_errors_clearly_when_gitmodules_fetch_fails(monkeypatch):
     def raise_fetch_error():
         raise FetchError("boom")
 
-    monkeypatch.setattr(cli_module, "fetch_gitmodules", raise_fetch_error)
+    monkeypatch.setattr(fetch_module, "fetch_gitmodules", raise_fetch_error)
 
     runner = CliRunner()
     result = runner.invoke(main, ["fetch", "feedstocks"])
@@ -83,7 +83,7 @@ def _patch_fetch_recipe(monkeypatch, handler=None):
             return handler(source)
         return None
 
-    monkeypatch.setattr(cli_module, "fetch_recipe", fake_fetch_recipe)
+    monkeypatch.setattr(fetch_module, "fetch_recipe", fake_fetch_recipe)
     return seen
 
 
@@ -97,7 +97,7 @@ def test_fetch_since_flag_is_passed_to_fetch_updated_feedstocks(tmp_path, monkey
         seen_calls.append((since, token))
         return set()
 
-    monkeypatch.setattr(cli_module, "fetch_updated_feedstocks", fake_fetch_updated_feedstocks)
+    monkeypatch.setattr(fetch_module, "fetch_updated_feedstocks", fake_fetch_updated_feedstocks)
 
     runner = CliRunner()
     result = runner.invoke(
@@ -128,7 +128,7 @@ def test_fetch_since_forces_refetch_of_updated_feedstocks(tmp_path, monkeypatch)
     _patch_fetch_gitmodules(monkeypatch, _gitmodules_text("widget-feedstock"))
     seen = _patch_fetch_recipe(monkeypatch)
     monkeypatch.setattr(
-        cli_module,
+        fetch_module,
         "fetch_updated_feedstocks",
         lambda since, token=None, on_step=None: {"widget-feedstock"},
     )
@@ -149,7 +149,7 @@ def test_fetch_without_since_skips_fetch_updated_feedstocks(tmp_path, monkeypatc
     def fail_if_called(since, token=None, on_step=None):
         raise AssertionError("fetch_updated_feedstocks should not be called without --since")
 
-    monkeypatch.setattr(cli_module, "fetch_updated_feedstocks", fail_if_called)
+    monkeypatch.setattr(fetch_module, "fetch_updated_feedstocks", fail_if_called)
 
     runner = CliRunner()
     result = runner.invoke(main, ["fetch", "feedstocks", "--cache-dir", str(tmp_path / "cache")])
@@ -334,7 +334,7 @@ def test_fetch_maintainer_history_backfill_invokes_run_backfill_with_parsed_date
     def fake_run_backfill(start, end, checkpoint_path, output_path, **kwargs):
         seen_calls.append((start, end, checkpoint_path, output_path))
 
-    monkeypatch.setattr(cli_module, "run_backfill", fake_run_backfill)
+    monkeypatch.setattr(fetch_module, "run_backfill", fake_run_backfill)
 
     runner = CliRunner()
     result = runner.invoke(
@@ -423,7 +423,7 @@ def test_fetch_feedstock_count_history_backfill_invokes_run_backfill_with_parsed
     def fake_run_backfill(start, end, output_path, **kwargs):
         seen_calls.append((start, end, output_path))
 
-    monkeypatch.setattr(cli_module.fch, "run_backfill", fake_run_backfill)
+    monkeypatch.setattr(fetch_module.fch, "run_backfill", fake_run_backfill)
 
     runner = CliRunner()
     result = runner.invoke(
@@ -452,7 +452,7 @@ def test_fetch_package_downloads_writes_output(tmp_path, monkeypatch):
     async def fake_fetch_monthly_downloads(months, timeout, **kwargs):
         return {"numpy": {"2026-01": 5, "2026-02": 8}, "scipy": {"2026-02": 2}}
 
-    monkeypatch.setattr(cli_module, "fetch_monthly_downloads", fake_fetch_monthly_downloads)
+    monkeypatch.setattr(fetch_module, "fetch_monthly_downloads", fake_fetch_monthly_downloads)
 
     output = tmp_path / "package-downloads.json"
     runner = CliRunner()
@@ -475,7 +475,7 @@ def test_fetch_package_downloads_passes_months_and_data_source_options(tmp_path,
         seen_calls.append((months, data_source))
         return {}
 
-    monkeypatch.setattr(cli_module, "fetch_monthly_downloads", fake_fetch_monthly_downloads)
+    monkeypatch.setattr(fetch_module, "fetch_monthly_downloads", fake_fetch_monthly_downloads)
 
     runner = CliRunner()
     result = runner.invoke(
@@ -503,7 +503,7 @@ def test_fetch_package_downloads_reports_error_on_fetch_failure(tmp_path, monkey
     async def fake_fetch_monthly_downloads(months, timeout, **kwargs):
         raise pd_module.PackageDownloadsFetchError("boom")
 
-    monkeypatch.setattr(cli_module, "fetch_monthly_downloads", fake_fetch_monthly_downloads)
+    monkeypatch.setattr(fetch_module, "fetch_monthly_downloads", fake_fetch_monthly_downloads)
 
     runner = CliRunner()
     result = runner.invoke(
@@ -607,7 +607,7 @@ def _patch_fetch_user_info(monkeypatch, handler):
     async def fake_fetch_user_info(client, username, cooldown, pacer, retries=3, token=None):
         return handler(username)
 
-    monkeypatch.setattr(cli_module, "fetch_user_info", fake_fetch_user_info)
+    monkeypatch.setattr(fetch_module, "fetch_user_info", fake_fetch_user_info)
 
 
 def test_fetch_maintainer_info_writes_profiles_and_skips_team_handles(tmp_path, monkeypatch):
@@ -861,3 +861,103 @@ def test_generate_site_data_skips_missing_history_files_without_failing(tmp_path
     # the rest of the command still ran normally
     assert (output_dir / "maintainer-overview.json").exists()
     assert (output_dir / "package-overview.json").exists()
+
+
+def test_generate_site_data_copies_maintainer_countries_when_present(tmp_path):
+    _write_minimal_site_data_inputs(tmp_path)
+    maintainer_countries = tmp_path / "maintainer-countries.json"
+    maintainer_countries.write_text(
+        json.dumps([{"country": "Germany", "iso_numeric": "276", "count": 1}])
+    )
+    output_dir = tmp_path / "output"
+
+    result = _invoke_generate_site_data(
+        tmp_path,
+        output_dir,
+        "--maintainer-countries-file",
+        str(maintainer_countries),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads((output_dir / "maintainer-countries.json").read_text()) == json.loads(
+        maintainer_countries.read_text()
+    )
+
+
+def test_generate_site_data_skips_missing_maintainer_countries_without_failing(tmp_path):
+    _write_minimal_site_data_inputs(tmp_path)
+    output_dir = tmp_path / "output"
+
+    result = _invoke_generate_site_data(
+        tmp_path,
+        output_dir,
+        "--maintainer-countries-file",
+        str(tmp_path / "maintainer-countries.json"),  # never written -- doesn't exist
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "not found, skipping" in result.output
+    assert not (output_dir / "maintainer-countries.json").exists()
+    assert (output_dir / "maintainer-overview.json").exists()
+
+
+def test_generate_maintainer_countries_writes_tally(tmp_path):
+    maintainer_info = tmp_path / "maintainer-info.json"
+    maintainer_info.write_text(
+        json.dumps(
+            {
+                "alice": {"login": "alice", "location": "Berlin, Germany"},
+                "bob": {"login": "bob", "location": "Portland, OR"},
+                "eve": {"login": "eve", "location": "Atlantis"},
+                "mallory": {"login": "mallory", "location": None},
+            }
+        )
+    )
+    output = tmp_path / "maintainer-countries.json"
+
+    result = CliRunner().invoke(
+        main,
+        [
+            "generate",
+            "maintainer-countries",
+            "--maintainer-info-file",
+            str(maintainer_info),
+            "--output",
+            str(output),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    rows = json.loads(output.read_text())
+    by_country = {row["country"]: row for row in rows}
+    assert by_country["Germany"] == {"country": "Germany", "iso_numeric": "276", "count": 1}
+    assert by_country["United States"] == {
+        "country": "United States",
+        "iso_numeric": "840",
+        "count": 1,
+    }
+    assert "Atlantis" not in by_country
+
+
+def test_generate_maintainer_countries_report_does_not_write_output(tmp_path):
+    maintainer_info = tmp_path / "maintainer-info.json"
+    maintainer_info.write_text(json.dumps({"alice": {"location": "Berlin, Germany"}}))
+    output = tmp_path / "maintainer-countries.json"
+
+    result = CliRunner().invoke(
+        main,
+        [
+            "generate",
+            "maintainer-countries",
+            "--maintainer-info-file",
+            str(maintainer_info),
+            "--output",
+            str(output),
+            "--report",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Germany" in result.output
+    assert "UNRESOLVED" in result.output
+    assert not output.exists()

@@ -12,14 +12,14 @@ export interface FeedstockCountHistoryPoint {
 	feedstock_count: number;
 }
 
-function resolveDataUrl(filename: string): string {
+export function resolveDataUrl(filename: string): string {
 	if (!SITE_BASE_URL) {
 		return `/data/${filename}`;
 	}
 	return `${SITE_BASE_URL.replace(/\/+$/, '')}/data/${filename}`;
 }
 
-async function loadJson<T>(filename: string): Promise<T> {
+export async function loadJson<T>(filename: string): Promise<T> {
 	const url = resolveDataUrl(filename);
 	const res = await fetch(url);
 	if (!res.ok) {

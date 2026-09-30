@@ -15,6 +15,7 @@ dependencies = [
     "zstandard>=0.22",
     "pyarrow>=15",
     "py-rattler>=0.26",
+    "pycountry>=24.6",
 ]
 
 [project.scripts]
@@ -43,6 +44,7 @@ rich-click = ">=1.9.9,<2"
 zstandard = ">=0.22"
 pyarrow = ">=15"
 py-rattler = ">=0.26"
+pycountry = ">=24.6"
 
 [tool.pixi.pypi-dependencies]
 feedstock-maintainers = { path = ".", editable = true }
@@ -68,6 +70,7 @@ fetch-package-downloads = "feedstock-maintainers fetch package-downloads"
 fetch-package-about = "feedstock-maintainers fetch package-about"
 generate-maintainers = "feedstock-maintainers generate maintainers"
 generate-maintainer-graph = "feedstock-maintainers generate maintainer-graph --output web/static/data/maintainer-graph.json"
+generate-maintainer-countries = "feedstock-maintainers generate maintainer-countries"
 generate-package-maintainers = "feedstock-maintainers generate package-maintainers"
 generate-maintainer-coverage = "feedstock-maintainers generate maintainer-coverage"
 generate-site-data = "feedstock-maintainers generate site-data"

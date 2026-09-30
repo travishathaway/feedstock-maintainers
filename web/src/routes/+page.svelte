@@ -3,6 +3,7 @@
 	import { resolve } from '$app/paths';
 	import Avatar from '$lib/components/Avatar.svelte';
 	import FeedstockCountChart from '$lib/components/FeedstockCountChart.svelte';
+	import MaintainerCountryMap from '$lib/components/MaintainerCountryMap.svelte';
 	import { loadMaintainerOverview, type MaintainerOverview } from '$lib/site-data';
 	import { formatNumber, formatPercent } from '$lib/format';
 
@@ -117,6 +118,13 @@
 					>
 				</p>
 			</div>
+		</div>
+	</div>
+
+	<div class="d-flex mt-5 mb-5 ps-5 pe-5" style="max-height: 420px;">
+		<div class="col">
+			<h3 class="mb-3">Maintainers by country*</h3>
+			<MaintainerCountryMap />
 		</div>
 	</div>
 

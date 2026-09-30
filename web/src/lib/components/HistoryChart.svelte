@@ -10,6 +10,7 @@
 		Legend,
 		Filler
 	} from 'chart.js';
+	import { readCssColor } from '$lib/color';
 
 	ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend, Filler);
 
@@ -39,13 +40,7 @@
 		return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 	}
 
-	function readPrimaryColor(): string {
-		if (typeof window === 'undefined') return FALLBACK_PRIMARY_HEX;
-		const value = getComputedStyle(document.documentElement).getPropertyValue('--bs-primary').trim();
-		return value || FALLBACK_PRIMARY_HEX;
-	}
-
-	const primaryColor = readPrimaryColor();
+	const primaryColor = readCssColor('--bs-primary', FALLBACK_PRIMARY_HEX);
 
 	const data = $derived({
 		labels,

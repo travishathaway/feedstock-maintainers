@@ -12,7 +12,7 @@ repos:
       - id: check-json
         exclude: (^|/)tsconfig(\..*)?\.json$
       - id: check-added-large-files
-        args: [--maxkb=1000]
+        args: [--maxkb=2000]
       - id: check-merge-conflict
       - id: check-case-conflict
       - id: debug-statements

@@ -12,6 +12,9 @@ reports/
 *.xls*
 *.zip*
 data/
+# ...except the vendored GeoNames snapshot shipped as package data (not generated/cached).
+!src/feedstock_maintainers/data/
+!src/feedstock_maintainers/data/**
 
 # direnv
 .envrc

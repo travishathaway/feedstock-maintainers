@@ -15,8 +15,11 @@
 		"@sveltejs/adapter-static": "^3.0.6",
 		"@sveltejs/kit": "^2.63.0",
 		"@sveltejs/vite-plugin-svelte": "^7.1.2",
+		"@types/geojson": "^7946.0.16",
 		"@types/node": "^22.0.0",
 		"@types/sanitize-html": "^2.16.1",
+		"@types/topojson-client": "^3.1.5",
+		"@types/topojson-specification": "^1.0.5",
 		"sass": "^1.104.1",
 		"svelte": "^5.56.1",
 		"svelte-check": "^4.6.0",
@@ -30,6 +33,7 @@
 		"bootstrap": "^5.3.8",
 		"bootstrap-icons": "^1.13.1",
 		"chart.js": "^4.5.1",
+		"chartjs-chart-geo": "^4.3.6",
 		"graphology": "^0.26.0",
 		"graphology-layout": "^0.6.1",
 		"graphology-layout-forceatlas2": "^0.10.1",
@@ -37,6 +41,8 @@
 		"sanitize-html": "^2.17.7",
 		"sigma": "^3.0.2",
 		"svelte-chartjs": "^4.0.1",
-		"tom-select": "^2.6.2"
+		"tom-select": "^2.6.2",
+		"topojson-client": "^3.1.0",
+		"world-atlas": "^2.0.2"
 	}
 }
