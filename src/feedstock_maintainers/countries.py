@@ -159,14 +159,17 @@ def pretty(name: str) -> str:
 # Country tokens of 3 characters or fewer that are safe to match inside longer text.
 SHORT_COUNTRY_TOKENS = {"usa", "uk", "us", "uae", "prc", "gb", "nz", "hk"}
 
-# --- ISO 3166-1 numeric codes, keyed by the exact display string resolve() returns ----------
-# This is the join key the frontend map uses, since it's what a world-atlas TopoJSON feature's
-# `id` is -- it sidesteps any name mismatch between pycountry's names and a map dataset's names.
+# --- ISO 3166-1 codes, keyed by the exact display string resolve() returns -------------------
+# ISO_NUMERIC is the join key the frontend map uses, since it's what a world-atlas TopoJSON
+# feature's `id` is -- it sidesteps any name mismatch between pycountry's names and a map
+# dataset's names. ISO_ALPHA2 is what the frontend uses to render a flag emoji.
 
 ISO_NUMERIC: dict[str, str] = {}
+ISO_ALPHA2: dict[str, str] = {}
 for _c in pycountry.countries:
     _display = pretty(getattr(_c, "common_name", None) or _c.name)
     ISO_NUMERIC[_display] = _c.numeric
+    ISO_ALPHA2[_display] = _c.alpha_2
 
 # --- States / provinces ------------------------------------------------------
 # (country code, whether to also match 2-letter codes like "WA" / "ON")
@@ -460,8 +463,13 @@ def tally_countries(
 
 
 def to_rows(tally: Counter[str], count_key: str = "count") -> list[dict]:
-    """Tally rows sorted by count descending, each carrying its ISO 3166-1 numeric code."""
+    """Tally rows sorted by count descending, each carrying its ISO 3166-1 numeric/alpha-2 codes."""
     return [
-        {"country": c, "iso_numeric": ISO_NUMERIC.get(c), count_key: n}
+        {
+            "country": c,
+            "iso_numeric": ISO_NUMERIC.get(c),
+            "iso_alpha2": ISO_ALPHA2.get(c),
+            count_key: n,
+        }
         for c, n in tally.most_common()
     ]

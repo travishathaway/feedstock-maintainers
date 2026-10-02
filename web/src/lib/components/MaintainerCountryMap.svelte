@@ -11,7 +11,7 @@
 	import { feature } from 'topojson-client';
 	import type { Topology, GeometryCollection } from 'topojson-specification';
 	import type { Feature, FeatureCollection, Geometry } from 'geojson';
-	import { loadMaintainerCountries } from '$lib/countries';
+	import type { MaintainerCountryCount } from '$lib/countries';
 	import { readCssColor, sequentialInterpolator } from '$lib/color';
 
 	ChartJS.register(
@@ -44,6 +44,12 @@
 		value: number;
 	}
 
+	interface Props {
+		counts: MaintainerCountryCount[];
+	}
+
+	let { counts }: Props = $props();
+
 	let loading = $state(true);
 	let error = $state<string | undefined>(undefined);
 	let chartData = $state<{ datasets: { data: ChoroplethDatum[]; outline: Feature[] }[] } | undefined>(
@@ -53,10 +59,7 @@
 
 	onMount(async () => {
 		try {
-			const [counts, worldModule] = await Promise.all([
-				loadMaintainerCountries(),
-				import('world-atlas/countries-110m.json')
-			]);
+			const worldModule = await import('world-atlas/countries-110m.json');
 			const world = worldModule.default as unknown as CountriesTopology;
 			const collection = feature(world, world.objects.countries) as FeatureCollection<
 				Geometry,
@@ -96,7 +99,14 @@
 
 	const options = {
 		responsive: true,
-		maintainAspectRatio: false,
+		// The world map's own fitted aspect ratio (via naturalEarth1) is ~1.93:1 -- chartjs-chart-geo's
+		// ProjectionScale always *centers* the fitted map within whatever canvas it's given, so a
+		// canvas noticeably wider-than-tall relative to that (the previous maintainAspectRatio:
+		// false left height to the container's CSS, independent of width) left big, symmetric empty
+		// gutters on both sides. Matching the canvas's own aspect ratio to the map's removes that
+		// slack rather than trying to override the library's internal centering.
+		maintainAspectRatio: true,
+		aspectRatio: 1.93,
 		showOutline: true,
 		plugins: {
 			legend: { display: false },
@@ -132,7 +142,7 @@
 				interpolate: sequentialInterpolator(accentColor),
 				missing: missingColor,
 				legend: {
-					position: 'bottom-right' as const
+					position: 'bottom-left' as const
 				},
 				// Works around a real chartjs-chart-geo 4.3.6 / chart.js 4.5.1 incompatibility:
 				// ColorLogarithmicScale declares a static `descriptors._scriptable` that's meant
@@ -164,14 +174,11 @@
 {#if error}
 	<p class="error">{error}</p>
 {:else if loading}
-	<p class="text-body-secondary">Loading maintainer countries…</p>
+	<p class="text-body-secondary">Loading world map…</p>
 {:else if chartData}
 	<div class="country-map">
 		<Chart type="choropleth" data={chartData} {options} />
 	</div>
-	<p class="small text-body-secondary mt-2 mb-0 text-center">
-		*Based on self-reported location on GitHub profiles and may be inaccurate.
-	</p>
 {/if}
 
 <style>
@@ -180,9 +187,10 @@
 	}
 
 	.country-map {
+		/* No fixed height here -- `maintainAspectRatio`/`aspectRatio` above now size the canvas
+		   from its own width, which is what keeps the map's natural proportions instead of
+		   stretching into whatever height a fixed CSS value would force. */
 		position: relative;
 		width: 100%;
-		height: 100%;
-		min-height: 320px;
 	}
 </style>

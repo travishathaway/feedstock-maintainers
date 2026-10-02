@@ -334,10 +334,10 @@ def generate_maintainer_countries(
     """Tally which countries maintainers come from, resolved offline from each GitHub user's
     free-text `location` field (see `countries.py` for the resolution rules).
 
-    Writes --output: [{"country": ..., "iso_numeric": ..., "count": ...}, ...] sorted by count
-    descending. Pass --report to instead print which raw locations resolved to each country plus
-    the unresolved ones, for auditing -- check this before trusting the numbers, since free text
-    is messy and new data may need new entries in countries.OVERRIDES.
+    Writes --output: [{"country": ..., "iso_numeric": ..., "iso_alpha2": ..., "count": ...}, ...]
+    sorted by count descending. Pass --report to instead print which raw locations resolved to
+    each country plus the unresolved ones, for auditing -- check this before trusting the
+    numbers, since free text is messy and new data may need new entries in countries.OVERRIDES.
     """
     console = Console()
 

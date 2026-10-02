@@ -930,10 +930,16 @@ def test_generate_maintainer_countries_writes_tally(tmp_path):
     assert result.exit_code == 0, result.output
     rows = json.loads(output.read_text())
     by_country = {row["country"]: row for row in rows}
-    assert by_country["Germany"] == {"country": "Germany", "iso_numeric": "276", "count": 1}
+    assert by_country["Germany"] == {
+        "country": "Germany",
+        "iso_numeric": "276",
+        "iso_alpha2": "DE",
+        "count": 1,
+    }
     assert by_country["United States"] == {
         "country": "United States",
         "iso_numeric": "840",
+        "iso_alpha2": "US",
         "count": 1,
     }
     assert "Atlantis" not in by_country
