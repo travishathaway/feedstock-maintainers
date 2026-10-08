@@ -23,7 +23,7 @@ from rich.progress import (
     TransferSpeedColumn,
 )
 
-from .. import activity
+from .. import activity, health_signals, teams
 from .. import feedstock_count_history as fch
 from ..cache import RecipeCache
 from ..github import (
@@ -1209,3 +1209,243 @@ def fetch_feedstock_activity(
     store.flush()
 
     console.print(f"[green]Done.[/] Activity for {len(todo)} feedstocks written to {output}")
+
+
+@fetch.command("feedstock-health-signals")
+@click.option(
+    "--tiers-file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path("feedstock-tiers.json"),
+    show_default=True,
+    help="Path to the feedstock tiers JSON file (as produced by `generate feedstock-tiers`).",
+)
+@click.option(
+    "--tier",
+    "tiers",
+    multiple=True,
+    default=("top",),
+    show_default=True,
+    help="Which tier(s) to fetch signals for. Repeat for multiple.",
+)
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=Path("feedstock-health-signals-raw.json"),
+    show_default=True,
+    help="Path to the raw per-feedstock health signals file to update/create.",
+)
+@click.option(
+    "--since",
+    default=None,
+    help="Only fetch feedstocks flagged as updated since this timestamp plus any never-fetched "
+    "or stale tier members. Omit for a full fetch of every eligible tier member.",
+)
+@click.option(
+    "--force/--resume",
+    default=False,
+    help="Re-fetch every tier member regardless of --since/staleness (default: resume).",
+)
+@click.option(
+    "--staleness-days",
+    type=int,
+    default=7,
+    show_default=True,
+    help="Re-fetch a tier member once its last fetch is older than this. Shorter than "
+    "`fetch feedstock-activity` because open PRs and comments change without default-branch "
+    "commits.",
+)
+@click.option(
+    "--limit",
+    type=int,
+    default=None,
+    help="Only fetch the first N eligible feedstocks (handy for trying the command out).",
+)
+@click.option(
+    "--batch-size",
+    type=int,
+    default=10,
+    show_default=True,
+    help="Number of feedstocks aliased into one GraphQL request.",
+)
+@click.option(
+    "--retries",
+    type=int,
+    default=3,
+    show_default=True,
+    help="Retries for transient errors (403/429/5xx/network) per request.",
+)
+@click.option(
+    "--timeout", type=float, default=30.0, show_default=True, help="Per-request timeout in seconds."
+)
+@click.option(
+    "--token",
+    envvar="GITHUB_TOKEN",
+    default=None,
+    help="GitHub token (required in practice for GraphQL). Prefer the GITHUB_TOKEN environment "
+    "variable over this flag.",
+)
+@click.option(
+    "--rate-limit",
+    "requests_per_second",
+    type=float,
+    default=1.0,
+    show_default=True,
+    help="Steady-state cap on GraphQL requests/second. Pass 0 to disable pacing entirely.",
+)
+def fetch_feedstock_health_signals(
+    tiers_file: Path,
+    tiers: tuple[str, ...],
+    output: Path,
+    since: str | None,
+    force: bool,
+    staleness_days: int,
+    limit: int | None,
+    batch_size: int,
+    retries: int,
+    timeout: float,
+    token: str | None,
+    requests_per_second: float,
+) -> None:
+    """Fetch the raw inputs for the feedstock health score from GitHub's GraphQL API.
+
+    Per feedstock in --tier: the last non-bot commit, the last non-bot comment, the open
+    non-draft PR backlog (split into human / bot version-update / bot migration PRs) and the open
+    issue count. Run `generate feedstock-health` afterward to turn these into scores.
+    """
+    console = Console()
+
+    tiers_data = json.loads(tiers_file.read_text(encoding="utf-8"))["feedstocks"]
+    tier_set = set(tiers)
+    tier_members = sorted(name for name, info in tiers_data.items() if info["tier"] in tier_set)
+    tier_by_feedstock = {name: tiers_data[name]["tier"] for name in tier_members}
+    console.print(f"{len(tier_members)} feedstocks in tier(s) {sorted(tier_set)}")
+
+    updated_feedstocks = fetch_updated_feedstocks(since, token=token) if since else None
+
+    store = health_signals.HealthSignalStore(output)
+    now = datetime.now(timezone.utc)
+    todo = [
+        name
+        for name in tier_members
+        if store.should_fetch(name, updated_feedstocks, force, now, timedelta(days=staleness_days))
+    ]
+    if limit is not None:
+        todo = todo[:limit]
+    console.print(f"{len(todo)} to fetch")
+    if not todo:
+        console.print("[green]Nothing to do.[/]")
+        return
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        TimeElapsedColumn(),
+        console=console,
+        transient=True,
+    ) as progress:
+        task = progress.add_task("Fetching health signals...", total=None)
+        asyncio.run(
+            health_signals.run_health_signals_fetch(
+                todo,
+                store,
+                tier_by_feedstock,
+                token,
+                batch_size=batch_size,
+                requests_per_second=requests_per_second,
+                retries=retries,
+                timeout=timeout,
+                on_step=lambda description: progress.update(task, description=description + "..."),
+            )
+        )
+
+    console.print(f"[green]Done.[/] Health signals for {len(todo)} feedstocks written to {output}")
+
+
+@fetch.command("team-members")
+@click.option(
+    "--maintainers-file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path("maintainers.json"),
+    show_default=True,
+    help="Path to the maintainers JSON file (as produced by `generate maintainers`).",
+)
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=Path("team-members.json"),
+    show_default=True,
+    help="Path to write the {team handle: [member login, ...]} JSON file. Teams that can't be "
+    "read keep their members from any existing file.",
+)
+@click.option(
+    "--retries", type=int, default=3, show_default=True, help="Retries per request on errors."
+)
+@click.option(
+    "--timeout", type=float, default=30.0, show_default=True, help="Per-request timeout (seconds)."
+)
+@click.option(
+    "--token",
+    envvar="GITHUB_TOKEN",
+    default=None,
+    help="GitHub token able to read the organization's teams. Prefer the GITHUB_TOKEN "
+    "environment variable over this flag.",
+)
+@click.option(
+    "--rate-limit",
+    "requests_per_second",
+    type=float,
+    default=1.0,
+    show_default=True,
+    help="Steady-state cap on requests/second. Pass 0 to disable pacing entirely.",
+)
+def fetch_team_members(
+    maintainers_file: Path,
+    output: Path,
+    retries: int,
+    timeout: float,
+    token: str | None,
+    requests_per_second: float,
+) -> None:
+    """Resolve team handles used in `recipe-maintainers` (e.g. conda-forge/r) to current members.
+
+    Reads every team handle from --maintainers-file and looks up its members through the GitHub
+    Teams API. Needs a token that can read the organization's teams; without one, teams are
+    reported as unreadable and any previously fetched members are kept (never an error, so a
+    missing permission can't break the update run).
+    """
+    console = Console()
+    maintainers = json.loads(maintainers_file.read_text(encoding="utf-8"))
+    handles = teams.team_handles_in(maintainers)
+    previous = teams.load_team_members(output)
+    console.print(f"{len(handles)} team handle(s) found")
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        TimeElapsedColumn(),
+        console=console,
+        transient=True,
+    ) as progress:
+        task = progress.add_task("Fetching team members...", total=None)
+        members, failed = asyncio.run(
+            teams.run_team_members_fetch(
+                handles,
+                previous,
+                token,
+                requests_per_second=requests_per_second,
+                retries=retries,
+                timeout=timeout,
+                on_step=lambda description: progress.update(task, description=description + "..."),
+            )
+        )
+
+    teams.write_team_members(output, members)
+    console.print(f"[green]Done.[/] {len(members)} team(s) written to {output}")
+    if failed:
+        console.print(
+            f"[yellow]Warning:[/] could not read {len(failed)} team(s) "
+            f"(token lacks org team access?); kept previous members where available: "
+            f"{', '.join(failed[:5])}{'...' if len(failed) > 5 else ''}"
+        )

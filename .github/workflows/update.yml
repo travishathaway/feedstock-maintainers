@@ -4,6 +4,26 @@ on:
   workflow_dispatch:
   schedule:
     - cron: '0 0/3 * * *'   # every three hours, on the hour (UTC)
+  # Called by cold-start.yml (manual only) to run one collection routine in full. Not meant to be
+  # triggered directly -- use the cold-start workflow.
+  workflow_call:
+    inputs:
+      routine:
+        description: Collection routine to run in full (feedstock-activity or feedstock-health-signals)
+        type: string
+        default: ''
+      force:
+        description: Re-fetch every top-tier feedstock, even ones fetched recently
+        type: boolean
+        default: false
+
+# Scheduled/manual runs never overlap a cold-start run (which holds the same group via
+# cold-start.yml), so neither can overwrite the other's artifact. When called from cold-start.yml
+# the group is made unique: the caller already holds `recipe-cache`, and reusing it here would
+# deadlock.
+concurrency:
+  group: ${{ inputs.routine && format('cold-start-inner-{0}', github.run_id) || 'recipe-cache' }}
+  cancel-in-progress: false
 
 env:
   ARCHIVE_NAME: recipe_cache.tar.gz
@@ -24,15 +44,23 @@ jobs:
           script: |
             const artifactName = process.env.ARTIFACT_NAME;
 
-            const { data } = await github.rest.actions.listWorkflowRuns({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              workflow_id: 'update.yml',
-              status: 'success',
-              per_page: 20,
-            });
+            // A cold-start run executes this same pipeline (via workflow_call), but GitHub records
+            // it under cold-start.yml, so both workflows' runs have to be considered. Every run
+            // of either does a full recipe refresh, so any one of them is a valid baseline.
+            const runs = [];
+            for (const workflow_id of ['update.yml', 'cold-start.yml']) {
+              const { data } = await github.rest.actions.listWorkflowRuns({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id,
+                status: 'success',
+                per_page: 20,
+              });
+              runs.push(...data.workflow_runs);
+            }
+            runs.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
-            for (const run of data.workflow_runs) {
+            for (const run of runs) {
               const { data: artifactsData } = await github.rest.actions.listWorkflowRunArtifacts({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -95,6 +123,9 @@ jobs:
       - name: Update recipes
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Optional: a token that can read the conda-forge org's teams (the default
+          # GITHUB_TOKEN is repo-scoped and usually can't). Used only for `fetch team-members`.
+          TEAM_READ_TOKEN: ${{ secrets.TEAM_READ_TOKEN }}
           SINCE: ${{ needs.find-source.outputs.since }}
         run: |
           if [ -n "$SINCE" ]; then
@@ -107,6 +138,10 @@ jobs:
           pixi run fsm fetch maintainer-info --maintainers-file maintainers.json
           pixi run fsm generate maintainer-countries
           pixi run fsm generate maintainer-graph --output maintainer-graph.json
+          # Resolve team handles (conda-forge/r, ...) to current members. Needs a token that can
+          # read the org's teams; without one it keeps the previous members and never fails the run.
+          GITHUB_TOKEN="${TEAM_READ_TOKEN:-$GITHUB_TOKEN}" pixi run fsm fetch team-members
+          [ -f team-members.json ] || echo '{}' > team-members.json
           pixi run fsm generate package-maintainers
           pixi run fsm generate package-graph -p linux-64 -p noarch --output package-graph.json
           pixi run fsm generate transitive-dependencies -p linux-64 -p noarch --output transitive-dependencies.json
@@ -123,6 +158,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SINCE: ${{ needs.find-source.outputs.since }}
+          ROUTINE: ${{ inputs.routine }}
+          FORCE: ${{ inputs.force }}
         run: |
           pixi run fsm generate feedstock-tiers \
             --package-names-file package-names.json \
@@ -139,7 +176,14 @@ jobs:
           # feedstock-activity-raw.json, or the next run's incremental fetch starts accumulating
           # history on its own -- every downstream consumer already treats missing activity data
           # as "not collected yet", not an error.
-          if [ -n "$SINCE" ]; then
+          if [ "$ROUTINE" = "feedstock-activity" ]; then
+            # Cold start (manual, see cold-start.yml): no --since, so every top-tier feedstock that
+            # was never fetched (or is stale) is collected, not just recently-changed ones.
+            FORCE_FLAG=""; [ "$FORCE" = "true" ] && FORCE_FLAG="--force"
+            pixi run fsm fetch feedstock-activity \
+              --tiers-file feedstock-tiers.json --tier top $FORCE_FLAG \
+              --output feedstock-activity-raw.json
+          elif [ -n "$SINCE" ]; then
             pixi run fsm fetch feedstock-activity \
               --tiers-file feedstock-tiers.json --tier top --since "$SINCE" \
               --output feedstock-activity-raw.json
@@ -153,6 +197,42 @@ jobs:
             --raw-file feedstock-activity-raw.json \
             --maintainers-file maintainers.json \
             --output feedstock-activity.json
+
+      - name: Update feedstock health
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SINCE: ${{ needs.find-source.outputs.since }}
+          ROUTINE: ${{ inputs.routine }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          # Capped per run (--limit): feedstocks never fetched or older than --staleness-days
+          # are picked up gradually across runs rather than in one large burst, so a cold start
+          # fills in over a few 3-hourly runs. Like the activity fetch above, skipped on a true
+          # cold start (no prior artifact) and every consumer treats missing health data as
+          # "not collected yet", not an error.
+          if [ "$ROUTINE" = "feedstock-health-signals" ]; then
+            # Cold start (manual, see cold-start.yml): no --since and no --limit, so every
+            # top-tier feedstock that was never fetched (or is stale) is collected in this run.
+            FORCE_FLAG=""; [ "$FORCE" = "true" ] && FORCE_FLAG="--force"
+            pixi run fsm fetch feedstock-health-signals \
+              --tiers-file feedstock-tiers.json --tier top $FORCE_FLAG \
+              --output feedstock-health-signals-raw.json
+          elif [ -n "$SINCE" ]; then
+            pixi run fsm fetch feedstock-health-signals \
+              --tiers-file feedstock-tiers.json --tier top --since "$SINCE" --limit 600 \
+              --output feedstock-health-signals-raw.json
+          fi
+
+          [ -f feedstock-health-signals-raw.json ] || echo '{}' > feedstock-health-signals-raw.json
+
+          pixi run fsm generate feedstock-health \
+            --signals-file feedstock-health-signals-raw.json \
+            --maintainers-file maintainers.json \
+            --activity-raw-file feedstock-activity-raw.json \
+            --activity-file feedstock-activity.json \
+            --package-names-file package-names.json \
+            --transitive-dependencies-file transitive-dependencies.json \
+            --output feedstock-health.json
 
       - name: Update maintainer + feedstock count history (monthly)
         env:
@@ -180,6 +260,7 @@ jobs:
             package-graph.json \
             package-names.json \
             package-maintainers.json \
+            team-members.json \
             package-downloads.json \
             package-about.json \
             licenses.json \
@@ -188,7 +269,9 @@ jobs:
             feedstock-count-history.json \
             feedstock-tiers.json \
             feedstock-activity-raw.json \
-            feedstock-activity.json
+            feedstock-activity.json \
+            feedstock-health-signals-raw.json \
+            feedstock-health.json
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

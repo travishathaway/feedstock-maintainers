@@ -1,0 +1,39 @@
+name: cold-start
+
+# Manual only. Runs the normal update pipeline (update.yml) but collects ONE routine in full, for
+# data that update.yml skips or only trickles in (e.g. when there is no prior artifact, or the first
+# fill-in of a newly added collector). The resulting artifact becomes the baseline for the next
+# scheduled update, exactly like a normal run.
+#
+# Usage: Actions -> cold-start -> Run workflow -> pick a routine.
+# Can take a long while for a full top-tier fetch; avoid starting it right before a scheduled
+# update (the two never run at the same time -- the later one waits for the earlier).
+
+on:
+  workflow_dispatch:
+    inputs:
+      routine:
+        description: Collection routine to run in full
+        type: choice
+        required: true
+        options:
+          - feedstock-health-signals
+          - feedstock-activity
+      force:
+        description: Re-fetch every top-tier feedstock, even ones fetched recently
+        type: boolean
+        default: false
+
+concurrency:
+  group: recipe-cache
+  cancel-in-progress: false
+
+jobs:
+  cold-start:
+    # Belt and braces: this workflow only declares workflow_dispatch, but make "manual only" explicit.
+    if: github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/update.yml
+    with:
+      routine: ${{ inputs.routine }}
+      force: ${{ inputs.force }}
+    secrets: inherit

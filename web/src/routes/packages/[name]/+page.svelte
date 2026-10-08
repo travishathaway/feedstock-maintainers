@@ -3,12 +3,20 @@
 	import DownloadsBarChart from '$lib/components/DownloadsBarChart.svelte';
 	import DependencyTree from '$lib/components/DependencyTree.svelte';
 	import PackageAbout from '$lib/components/PackageAbout.svelte';
+	import HealthHelp from '$lib/components/HealthHelp.svelte';
+	import {
+		HEALTH_COMPONENT_LABELS,
+		HEALTH_TIER_BADGE_CLASSES,
+		HEALTH_TIER_LABELS,
+		describeComponent,
+		formatRelativeTime
+	} from '$lib/health';
 	import {
 		listAvailablePlatforms,
 		listAvailableVersions,
 		type PlatformOption
 	} from '$lib/dependency-tree';
-	import { loadPackageProfile, type PackageProfile, type PackageStatus } from '$lib/site-data';
+	import { loadPackageProfile, type PackageProfile } from '$lib/site-data';
 	import { formatNumber, spdxLicenseUrl } from '$lib/format';
 	import type { PageProps } from './$types';
 
@@ -97,18 +105,6 @@
 				platformsLoading = false;
 			});
 	});
-
-	const STATUS_LABELS: Record<PackageStatus, string> = {
-		at_risk: 'At risk',
-		watch: 'Watch',
-		healthy: 'Healthy'
-	};
-
-	const STATUS_BADGE_CLASSES: Record<PackageStatus, string> = {
-		at_risk: 'text-bg-danger',
-		watch: 'text-bg-warning',
-		healthy: 'text-bg-success'
-	};
 </script>
 
 <div class="col-12 mt-4">
@@ -130,7 +126,6 @@
 		<div>
 			<div class="d-flex align-items-center gap-2 flex-wrap">
 				<h2 class="mb-0">{profile.name}</h2>
-				<span class="badge {STATUS_BADGE_CLASSES[profile.status]}">{STATUS_LABELS[profile.status]}</span>
                 {#if profile.license}
                     {@const licenseUrl = spdxLicenseUrl(profile.license)}
                     {#if licenseUrl}
@@ -159,9 +154,13 @@
                     {/each}
                 </div>
 			</div>
-			<!-- Static placeholder -- no version/description parsing or per-feedstock
-			     commit-timestamp tracking exists yet (plan decision #7). -->
-			<p class="text-body-secondary small mb-0 mt-2">Last updated unknown</p>
+			<p class="text-body-secondary small mb-0 mt-2">
+				{#if profile.health?.last_activity_at}
+					Last activity {formatRelativeTime(profile.health.last_activity_at)}
+				{:else}
+					Last updated unknown
+				{/if}
+			</p>
 		</div>
 	</div>
 
@@ -242,6 +241,54 @@
 				<span class="h3">{formatNumber(profile.downloads_last_month)}</span>
 				<p class="mb-0">Downloads / month</p>
 			</div>
+		</div>
+	</div>
+
+	<div class="card text-bg-light mt-4">
+		<div class="card-body">
+			<h3 class="h5">Health<HealthHelp /></h3>
+			{#if profile.health}
+				{@const health = profile.health}
+				<div class="d-flex align-items-baseline gap-3 flex-wrap mb-3">
+					<span class="h2 mb-0">{health.score.toFixed(0)}<span class="fs-6 text-secondary"> / 100</span></span>
+					<span class="badge {HEALTH_TIER_BADGE_CLASSES[health.tier]}"
+						>{HEALTH_TIER_LABELS[health.tier]}</span
+					>
+					{#if profile.feedstocks.length > 1}
+						<span class="small text-secondary">scored from {health.feedstock}-feedstock</span>
+					{/if}
+				</div>
+				{#if health.exempt}
+					<p class="small text-secondary">
+						This feedstock is on the exemption list (it never goes stale by design, or is
+						under constant attention but hard to build), so it is never labelled.
+					</p>
+				{/if}
+				<ul class="list-unstyled mb-0">
+					{#each Object.keys(HEALTH_COMPONENT_LABELS) as key (key)}
+						{@const component = key as keyof typeof HEALTH_COMPONENT_LABELS}
+						<li class="mb-2">
+							<div class="d-flex justify-content-between small">
+								<span class="fw-semibold">{HEALTH_COMPONENT_LABELS[component]}</span>
+								<span class="text-secondary">{Math.round(health.components[component].score * 100)}%</span>
+							</div>
+							<div class="progress" style="height: 6px" aria-hidden="true">
+								<div
+									class="progress-bar bg-secondary"
+									style="width: {Math.round(health.components[component].score * 100)}%"
+								></div>
+							</div>
+							<div class="small text-secondary">{describeComponent(component, health)}</div>
+						</li>
+					{/each}
+				</ul>
+			{:else}
+				<p class="small text-secondary mb-0">
+					Health signals are only collected for the most-downloaded and most-depended-on
+					feedstocks, so there is no score for this package. That says nothing about how
+					well it is maintained.
+				</p>
+			{/if}
 		</div>
 	</div>
 

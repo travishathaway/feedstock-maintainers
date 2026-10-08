@@ -1,46 +1,34 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { resolve } from '$app/paths';
-	import { loadPackageOverview, type PackageOverview, type PackageStatus } from '$lib/site-data';
+	import PackageList from '$lib/components/PackageList.svelte';
+	import {
+		loadPackageList,
+		loadPackageOverview,
+		type PackageList as PackageListData,
+		type PackageOverview
+	} from '$lib/site-data';
 	import { formatNumber, formatPercent } from '$lib/format';
 
 	let overview = $state<PackageOverview | undefined>(undefined);
+	let packageList = $state<PackageListData | undefined>(undefined);
 	let error = $state<string | undefined>(undefined);
+	let listError = $state<string | undefined>(undefined);
 	let loading = $state(true);
 
 	onMount(async () => {
-		try {
-			overview = await loadPackageOverview();
-		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
-		} finally {
-			loading = false;
-		}
+		// The overview cards are required; the list is best-effort (it is empty/absent until
+		// health data has been collected) and must not take the whole page down with it.
+		const [overviewResult, listResult] = await Promise.allSettled([
+			loadPackageOverview(),
+			loadPackageList()
+		]);
+		if (overviewResult.status === 'fulfilled') overview = overviewResult.value;
+		else error = String(overviewResult.reason?.message ?? overviewResult.reason);
+		if (listResult.status === 'fulfilled') packageList = listResult.value;
+		else listError = String(listResult.reason?.message ?? listResult.reason);
+		loading = false;
 	});
-
-	const STATUS_LABELS: Record<PackageStatus, string> = {
-		at_risk: 'At risk',
-		watch: 'Watch',
-		healthy: 'Healthy'
-	};
-
-	const STATUS_BADGE_CLASSES: Record<PackageStatus, string> = {
-		at_risk: 'text-bg-danger',
-		watch: 'text-bg-warning',
-		healthy: 'text-bg-success'
-	};
-
-	// Static mock data -- no per-feedstock commit-timestamp tracking exists yet (see the plan's
-	// decision #7). Not wired to real data; kept purely as a visual placeholder matching the
-	// mockup's shape.
-	const mockRecentUpdates = [
-		{ name: 'numpy', when: '2 hours ago', by: 'array-api-lynx' },
-		{ name: 'pandas', when: '5 hours ago', by: 'recipe-smith' },
-		{ name: 'scikit-learn', when: '1 day ago', by: 'sci-stack-mole' },
-		{ name: 'opencv', when: '3 days ago', by: 'build-matrix' },
-		{ name: 'gdal', when: '4 days ago', by: 'cross-compile-fox' },
-		{ name: 'r-base', when: '6 days ago', by: 'lakehouse-vole' }
-	];
 </script>
 
 <div class="col-12">
@@ -149,105 +137,20 @@
 		</div>
 	</div>
 
-	<div class="card text-bg-light mt-5">
-		<div class="card-body">
-			<h3 class="h5">High usage, thin maintainer bench</h3>
-			<p class="small text-secondary">
-				Ranked by download volume relative to maintainer count. These are the packages a bus
-				factor of one or two would hurt the most.
-			</p>
-			<table class="table align-middle mb-0">
-				<thead>
-					<tr>
-						<th>Package</th>
-						<th class="text-end">Downloads/mo</th>
-						<th class="text-end">Maintainers</th>
-						<th>Status</th>
-					</tr>
-				</thead>
-				<tbody>
-					{#each overview.risk_packages as pkg (pkg.name)}
-						<tr>
-							<td>
-								<a href={resolve('/packages/[name]', { name: encodeURIComponent(pkg.name) })}
-									>{pkg.name}</a
-								>
-							</td>
-							<td class="text-end">{formatNumber(pkg.downloads_last_month)}</td>
-							<td class="text-end">{formatNumber(pkg.maintainer_count)}</td>
-							<td>
-								<span class="badge {STATUS_BADGE_CLASSES[pkg.status]}">{STATUS_LABELS[pkg.status]}</span>
-							</td>
-						</tr>
-					{/each}
-				</tbody>
-			</table>
-		</div>
-	</div>
-
-	<div class="row mt-4">
-		<div class="col-lg-6 mb-4">
-			<div class="card text-bg-light h-100">
-				<div class="card-body">
-					<h3 class="h5">Most depended-on transitive dependencies</h3>
-					<p class="small text-secondary">
-						Packages other feedstocks pull in indirectly, not just direct installs.
-					</p>
-					<table class="table align-middle mb-0">
-						<thead>
-							<tr>
-								<th>Package</th>
-								<th class="text-end">Dependent feedstocks</th>
-								<th class="text-end">Maint.</th>
-							</tr>
-						</thead>
-						<tbody>
-							{#each overview.transitive_dependencies as dep (dep.name)}
-								<tr>
-									<td>
-										<a href={resolve('/packages/[name]', { name: encodeURIComponent(dep.name) })}
-											>{dep.name}</a
-										>
-									</td>
-									<td class="text-end">{formatNumber(dep.dependent_feedstocks)}</td>
-									<td class="text-end">{formatNumber(dep.maintainer_count)}</td>
-								</tr>
-							{/each}
-						</tbody>
-					</table>
-				</div>
-			</div>
-		</div>
-		<div class="col-lg-6 mb-4">
-			<div class="card text-bg-light h-100">
-				<div class="card-body">
-					<h3 class="h5">Recently updated feedstocks</h3>
-					<p class="small text-secondary">
-						Latest merged builds, most recent first.
-						<span class="fst-italic">Placeholder data -- not yet wired to a real source.</span>
-					</p>
-					<table class="table align-middle mb-0">
-						<thead>
-							<tr>
-								<th>Package</th>
-								<th>Updated</th>
-								<th>By</th>
-							</tr>
-						</thead>
-						<tbody>
-							{#each mockRecentUpdates as update (update.name)}
-								<tr>
-									<td>{update.name}</td>
-									<td class="text-secondary">{update.when}</td>
-									<td>@{update.by}</td>
-								</tr>
-							{/each}
-						</tbody>
-					</table>
-				</div>
-			</div>
-		</div>
-	</div>
+	<h3 class="h5 mt-5 mb-0">Browse packages</h3>
+	<p class="small text-secondary mb-0" style="max-width: 90ch">
+		Packages from the most-downloaded and most-depended-on feedstocks, with a relative health
+		score. It is a prompt to take a look, not a verdict.
+	</p>
+	{#if packageList && packageList.packages.length > 0}
+		<PackageList packages={packageList.packages} />
+	{:else if listError}
+		<p class="text-body-secondary mt-3">Package list unavailable ({listError}).</p>
+	{:else}
+		<p class="text-body-secondary mt-3">
+			Health data hasn't been collected yet — check back after the next data refresh.
+		</p>
+	{/if}
 {/if}
 
 <style>

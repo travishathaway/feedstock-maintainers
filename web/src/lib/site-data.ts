@@ -2,8 +2,6 @@
 // dev, where the dev server already serves web/static/* from the site root.
 const SITE_BASE_URL = import.meta.env.VITE_SITE_BASE_URL ?? '';
 
-export type PackageStatus = 'healthy' | 'watch' | 'at_risk';
-
 export interface TopMaintainer {
 	login: string;
 	name: string | null;
@@ -32,13 +30,6 @@ export interface MaintainerOverview {
 	popular_packages: PopularPackage[];
 }
 
-export interface RiskPackage {
-	name: string;
-	downloads_last_month: number;
-	maintainer_count: number;
-	status: PackageStatus;
-}
-
 export interface TransitiveDependency {
 	name: string;
 	dependent_feedstocks: number;
@@ -53,7 +44,6 @@ export interface PackageOverview {
 		packages_le2_maintainers_pct: number;
 		most_depended_on: { name: string; transitive_dependents: number; maintainer_count: number } | null;
 	};
-	risk_packages: RiskPackage[];
 	transitive_dependencies: TransitiveDependency[];
 }
 
@@ -120,6 +110,48 @@ export interface PackageAbout {
 	version: string;
 }
 
+export type HealthTier = 'active' | 'quiet' | 'needs_attention' | 'exempt';
+
+/** One component of the health score: its raw `value` (shape varies by component), its 0..1
+ *  `score` (1 = healthy) and its `weight` in the composite. */
+export interface HealthComponent {
+	value: unknown;
+	score: number;
+	weight: number;
+}
+
+export interface OpenPrCounts {
+	human?: number;
+	draft?: number;
+	version_update?: number;
+	migration?: number;
+	bot_other?: number;
+	total_open?: number;
+}
+
+export interface PackageHealth {
+	/** The feedstock the score came from (a package can be built by several). */
+	feedstock: string;
+	score: number;
+	tier: HealthTier;
+	exempt: boolean;
+	/** Latest commit, comment or merged PR, including PRs a bot opened and merged. */
+	last_activity_at: string | null;
+	/** Latest activity with a human involved (commit, comment, or a PR a person authored, merged or approved). */
+	last_human_activity_at: string | null;
+	components: {
+		recency: HealthComponent & { value: number | null };
+		maintainers: HealthComponent & { value: { listed: number; active: number | null } };
+		open_prs: HealthComponent & { value: OpenPrCounts };
+		issues: HealthComponent & { value: number };
+	};
+	exposure: {
+		transitive_dependents: number | null;
+		transitive_only_ratio: number | null;
+		value: number;
+	};
+}
+
 export interface PackageProfile {
 	name: string;
 	maintainers: PackageMaintainer[];
@@ -133,10 +165,48 @@ export interface PackageProfile {
 	notable_dependents: string[];
 	downloads_monthly: DownloadsMonthlyPoint[];
 	downloads_last_month: number;
-	status: PackageStatus;
 	feedstocks: FeedstockLink[];
 	license: string | null;
 	about: PackageAbout | null;
+	// null means health signals haven't been collected for this package's feedstock(s) (only a
+	// popularity-thresholded tier is covered) -- not that the package is unhealthy.
+	health: PackageHealth | null;
+}
+
+export interface PackageListRow {
+	name: string;
+	downloads_last_month: number;
+	maintainer_count: number;
+	active_maintainer_count: number | null;
+	last_activity_at: string | null;
+	health_score: number;
+	health_tier: HealthTier;
+	dependent_feedstock_count: number | null;
+	transitive_only_ratio: number | null;
+}
+
+/** The scoring constants (weights, thresholds, exempt list) emitted by `generate feedstock-health`
+ *  so the explainer page never drifts from the code. */
+export interface HealthConfig {
+	weights: Record<string, number>;
+	recency_full_days: number;
+	recency_zero_days: number;
+	dormant_days: number;
+	quiet_below: number;
+	needs_attention_base: number;
+	needs_attention_exposure_bonus: number;
+	exposure_full_dependents: number;
+	human_pr_penalty: number;
+	migration_pr_penalty: number;
+	migration_pr_free: number;
+	issues_saturation: number;
+	exempt_feedstocks: string[];
+}
+
+export interface PackageList {
+	generated_at: string;
+	config: HealthConfig | null;
+	packages: PackageListRow[];
 }
 
 function resolveDataUrl(path: string): string {
@@ -161,6 +231,10 @@ export function loadMaintainerOverview(): Promise<MaintainerOverview> {
 
 export function loadPackageOverview(): Promise<PackageOverview> {
 	return loadJson('package-overview.json');
+}
+
+export function loadPackageList(): Promise<PackageList> {
+	return loadJson('package-list.json');
 }
 
 export function loadMaintainerProfile(login: string): Promise<MaintainerProfile> {

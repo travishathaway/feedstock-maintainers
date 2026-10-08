@@ -26,7 +26,7 @@ the already-parsed contents of the root `*.json` artifacts:
     popularity-thresholded tier of feedstocks `activity.py` covers. Optional and partial by
     design -- a feedstock absent from it means "no activity data collected", not "zero active
     maintainers"; every function here distinguishes that `None` from an explicit `0` (see
-    `compute_status`, `active_maintainer_count_for_feedstocks`).
+    `active_maintainer_count_for_feedstocks`).
   - `package-about.json` (as produced by `fetch package-about`, see `package_about.py`):
     {package_name: {status, version, description, summary, home, dev_url, doc_url,
     recipe_maintainers, ...}} -- `info/about.json` metadata for each package's latest version,
@@ -69,13 +69,8 @@ from collections import Counter, defaultdict
 from collections.abc import Iterable, Iterator
 from typing import Any
 
-STATUS_AT_RISK = "at_risk"
-STATUS_WATCH = "watch"
-STATUS_HEALTHY = "healthy"
-
 _TOP_MAINTAINERS_LIMIT = 10
 _POPULAR_PACKAGES_LIMIT = 10
-_RISK_PACKAGES_LIMIT = 6
 _TRANSITIVE_DEPENDENCIES_LIMIT = 6
 _CO_MAINTAINERS_LIMIT = 12
 _NOTABLE_DEPENDENTS_LIMIT = 8
@@ -110,38 +105,6 @@ def is_ignored_package(name: str) -> bool:
 
 def team_handles(logins: Iterable[str]) -> set[str]:
     return {login for login in logins if is_team_handle(login)}
-
-
-def compute_status(maintainer_count: int, active_maintainer_count: int | None = None) -> str:
-    """Map a (team-handle-excluded) maintainer count to a health status.
-
-    Base thresholds (decision #5 in the plan): <=2 -> at_risk, 3-5 -> watch, 6+ -> healthy.
-
-    `active_maintainer_count` (from `feedstock-activity.json`, see `activity.py`) is the number of
-    distinct logins who actually authored/merged/reviewed a merged PR in the trailing 12 months --
-    a second, activity-based signal alongside the purely recipe-declared `maintainer_count`. When
-    it's known and zero, the status is demoted to at_risk even if the declared count looks
-    healthy: a maintainer list that reads fine on paper but nobody has touched in a year is exactly
-    the case this signal exists to catch. `None` (activity data not collected for this feedstock,
-    e.g. it's outside the popularity-thresholded tier `activity.py` covers) leaves the
-    declared-count-only behavior unchanged -- callers must not treat `None` the same as `0`.
-    """
-    if maintainer_count <= 2:
-        return STATUS_AT_RISK
-    if active_maintainer_count == 0:
-        return STATUS_AT_RISK
-    if maintainer_count <= 5:
-        return STATUS_WATCH
-    return STATUS_HEALTHY
-
-
-def compute_risk_score(downloads_last_month: int, maintainer_count: int) -> float:
-    """ "High usage, thin bench" ranking score (decision #6): downloads relative to maintainer
-    count, Laplace-smoothed (+1 in the denominator) so zero-maintainer packages still rank highest
-    without dividing by zero -- same shape as `graph_data.compute_maintainer_coverage`'s
-    `risk_score`, applied to downloads instead of transitive dependents.
-    """
-    return downloads_last_month / (maintainer_count + 1)
 
 
 def latest_month_downloads(monthly_downloads: dict[str, int]) -> tuple[str | None, int]:
@@ -380,27 +343,6 @@ def compute_package_overview(
             "maintainer_count": maintainer_counts.get(top["name"], 0),
         }
 
-    downloads_last_month_by_package = {
-        name: latest_month_downloads(lookup_package_downloads(package_downloads, name))[1]
-        for name in package_maintainers
-    }
-    risk_ranked_names = sorted(
-        package_maintainers,
-        key=lambda name: (
-            -compute_risk_score(downloads_last_month_by_package[name], maintainer_counts[name]),
-            name,
-        ),
-    )[:_RISK_PACKAGES_LIMIT]
-    risk_packages = [
-        {
-            "name": name,
-            "downloads_last_month": downloads_last_month_by_package[name],
-            "maintainer_count": maintainer_counts[name],
-            "status": compute_status(maintainer_counts[name]),
-        }
-        for name in risk_ranked_names
-    ]
-
     transitive_dependencies = [
         {
             "name": record["name"],
@@ -418,7 +360,6 @@ def compute_package_overview(
             "packages_le2_maintainers_pct": round(le2_pct, 1),
             "most_depended_on": most_depended_on,
         },
-        "risk_packages": risk_packages,
         "transitive_dependencies": transitive_dependencies,
     }
 
@@ -625,8 +566,8 @@ def active_maintainer_count_for_feedstocks(
     """Number of distinct logins active (declared or not) across `feedstocks` in the trailing
     activity window, or `None` if none of `feedstocks` is covered by `feedstock_activity` (as
     produced by `activity.build_feedstock_activity`) -- distinct from `0`, which means activity
-    data exists and says nobody was active. Callers must preserve that distinction (see
-    `compute_status`) rather than defaulting a missing feedstock to zero."""
+    data exists and says nobody was active. Callers must preserve that
+    distinction rather than defaulting a missing feedstock to zero."""
     if not feedstock_activity:
         return None
     covered = [feedstock_activity[fs] for fs in feedstocks if fs in feedstock_activity]
@@ -636,6 +577,50 @@ def active_maintainer_count_for_feedstocks(
     for record in covered:
         active.update(record.get("active_maintainers", {}))
     return len(active)
+
+
+def health_for_feedstocks(
+    feedstocks: list[str], feedstock_health: dict[str, dict] | None
+) -> dict[str, Any] | None:
+    """The health record to show for a package built from `feedstocks`, or `None` if none of them
+    has one (health is only collected for the popularity-thresholded tier, so `None` means "not
+    collected", never "unhealthy").
+
+    When several feedstocks produce the same package name, the *highest*-scoring covered one is
+    used (ties broken by name): giving the benefit of the doubt keeps the label from penalising a
+    package because one of its feedstocks happens to be quiet. The chosen feedstock is included
+    as `feedstock` so the UI can say where the score came from.
+    """
+    if not feedstock_health:
+        return None
+    covered = [(fs, feedstock_health[fs]) for fs in feedstocks if fs in feedstock_health]
+    if not covered:
+        return None
+    feedstock, record = max(covered, key=lambda pair: (pair[1]["score"], pair[0]))
+    return {"feedstock": feedstock, **record}
+
+
+def build_package_list_row(
+    profile: dict[str, Any], transitive_record: dict[str, Any] | None
+) -> dict[str, Any] | None:
+    """One compact row of `packages/list.json`, or `None` for a profile without health data (the
+    list only covers packages whose health was collected)."""
+    health = profile.get("health")
+    if health is None:
+        return None
+    return {
+        "name": profile["name"],
+        "downloads_last_month": profile["downloads_last_month"],
+        "maintainer_count": profile["maintainer_count"],
+        "active_maintainer_count": profile["active_maintainer_count"],
+        "last_activity_at": health["last_activity_at"],
+        "health_score": health["score"],
+        "health_tier": health["tier"],
+        "dependent_feedstock_count": profile["dependent_feedstock_count"],
+        "transitive_only_ratio": transitive_record["transitive_only_ratio"]
+        if transitive_record
+        else None,
+    }
 
 
 def build_package_profile(
@@ -651,6 +636,7 @@ def build_package_profile(
     license: str | None,
     feedstock_activity: dict[str, dict] | None = None,
     package_about: dict[str, dict] | None = None,
+    feedstock_health: dict[str, dict] | None = None,
 ) -> dict[str, Any]:
     """Build one `packages/<name>.json` payload. `normalized_package_downloads` must already be
     the output of `normalize_package_downloads`. `feedstocks` is the (sorted, non-empty) list of
@@ -660,7 +646,9 @@ def build_package_profile(
     it (or a package whose feedstock(s) aren't covered) just means `active_maintainer_count` is
     `None`, not an error. `package_about` is the optional `package-about.json` contents (see
     `package_about.py`); omitting it (or a package missing/not `status: "found"` within it) just
-    means `about` is `None`."""
+    means `about` is `None`. `feedstock_health` is the optional `"feedstocks"` sub-object of
+    `feedstock-health.json` (see `feedstock_health.py`); see `health_for_feedstocks` for how
+    several feedstocks collapse into one and what `health: None` means."""
     handles = team_handles(maintainer_logins)
     maintainer_count = len([login for login in maintainer_logins if login not in handles])
     maintainers = [
@@ -731,10 +719,10 @@ def build_package_profile(
         "notable_dependents": notable_dependents,
         "downloads_monthly": downloads_monthly,
         "downloads_last_month": downloads_last_month,
-        "status": compute_status(maintainer_count, active_maintainer_count),
         "feedstocks": feedstock_links,
         "license": license,
         "about": about,
+        "health": health_for_feedstocks(feedstocks, feedstock_health),
     }
 
 
@@ -748,6 +736,7 @@ def build_package_profiles(
     licenses: dict[str, str] | None = None,
     feedstock_activity: dict[str, dict] | None = None,
     package_about: dict[str, dict] | None = None,
+    feedstock_health: dict[str, dict] | None = None,
 ) -> Iterator[tuple[str, dict[str, Any]]]:
     """Yield `(name, profile)` for every package in `package_maintainers` (sorted), excluding
     `IGNORED_PACKAGES` -- exactly the names `packages/index.json` should list.
@@ -785,5 +774,6 @@ def build_package_profiles(
                 license,
                 feedstock_activity,
                 package_about,
+                feedstock_health,
             ),
         )

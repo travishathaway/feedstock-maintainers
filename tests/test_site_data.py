@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
+from feedstock_maintainers import site_data
 from feedstock_maintainers.site_data import (
     IGNORED_PACKAGES,
-    STATUS_AT_RISK,
-    STATUS_HEALTHY,
-    STATUS_WATCH,
     _maintainer_graph_adjacency,
     active_maintainer_count_for_feedstocks,
     build_maintainer_ego_network,
@@ -15,8 +13,6 @@ from feedstock_maintainers.site_data import (
     build_search_index,
     compute_maintainer_overview,
     compute_package_overview,
-    compute_risk_score,
-    compute_status,
     feedstocks_by_package_name,
     is_ignored_package,
     is_team_handle,
@@ -37,32 +33,7 @@ def _info(login: str, name: str | None = None) -> dict:
     }
 
 
-# ── compute_status / compute_risk_score ─────────────────────────────────────────────────────
-
-
-def test_status_thresholds():
-    assert compute_status(0) == STATUS_AT_RISK
-    assert compute_status(2) == STATUS_AT_RISK
-    assert compute_status(3) == STATUS_WATCH
-    assert compute_status(5) == STATUS_WATCH
-    assert compute_status(6) == STATUS_HEALTHY
-    assert compute_status(100) == STATUS_HEALTHY
-
-
-def test_status_active_maintainer_count_zero_demotes_healthy_to_at_risk():
-    assert compute_status(6, active_maintainer_count=0) == STATUS_AT_RISK
-
-
-def test_status_active_maintainer_count_zero_demotes_watch_to_at_risk():
-    assert compute_status(4, active_maintainer_count=0) == STATUS_AT_RISK
-
-
-def test_status_active_maintainer_count_none_preserves_declared_only_behavior():
-    assert compute_status(6, active_maintainer_count=None) == STATUS_HEALTHY
-
-
-def test_status_active_maintainer_count_nonzero_does_not_change_declared_status():
-    assert compute_status(6, active_maintainer_count=3) == STATUS_HEALTHY
+# ── active_maintainer_count_for_feedstocks ──────────────────────────────────────────────────
 
 
 def test_active_maintainer_count_for_feedstocks_none_when_no_activity_data():
@@ -89,12 +60,6 @@ def test_active_maintainer_count_for_feedstocks_unions_across_multiple_feedstock
 def test_active_maintainer_count_for_feedstocks_zero_when_covered_but_nobody_active():
     activity: dict[str, dict] = {"widget-feedstock": {"active_maintainers": {}}}
     assert active_maintainer_count_for_feedstocks(["widget-feedstock"], activity) == 0
-
-
-def test_risk_score_laplace_smoothed():
-    assert compute_risk_score(100, 0) == 100.0
-    assert compute_risk_score(100, 1) == 50.0
-    assert compute_risk_score(0, 0) == 0.0
 
 
 def test_is_team_handle():
@@ -318,25 +283,6 @@ def test_package_overview_most_depended_on_includes_maintainer_count():
         "transitive_dependents": 1000,
         "maintainer_count": 2,
     }
-
-
-def test_package_overview_risk_packages_ranked_by_risk_score_desc():
-    package_maintainers = {
-        "thin-bench": ["alice"],
-        "well-staffed": ["alice", "bob", "carol", "dave", "erin", "frank"],
-    }
-    package_downloads = {
-        "thin-bench": {"2026-01": 1000},
-        "well-staffed": {"2026-01": 1000},
-    }
-    overview = compute_package_overview(
-        package_maintainers, [], package_downloads, "2026-01-01T00:00:00Z"
-    )
-
-    names = [p["name"] for p in overview["risk_packages"]]
-    assert names[0] == "thin-bench"
-    assert overview["risk_packages"][0]["status"] == STATUS_AT_RISK
-    assert overview["risk_packages"][1]["status"] == STATUS_HEALTHY
 
 
 def test_package_overview_empty_transitive_dependencies_gives_null_most_depended_on():
@@ -646,19 +592,6 @@ def test_package_profile_maintainer_count_excludes_team_handles_but_lists_them()
     assert names["conda-forge/go"] is None  # no profile -> plain-text sentinel
 
 
-def test_package_profile_status_derived_from_maintainer_count():
-    package_maintainers = {
-        "at-risk": ["alice"],
-        "watch": ["alice", "bob", "carol"],
-        "healthy": ["alice", "bob", "carol", "dave", "erin", "frank"],
-    }
-    profiles = dict(build_package_profiles(package_maintainers, {}, _package_graph({}, []), [], {}))
-
-    assert profiles["at-risk"]["status"] == STATUS_AT_RISK
-    assert profiles["watch"]["status"] == STATUS_WATCH
-    assert profiles["healthy"]["status"] == STATUS_HEALTHY
-
-
 def test_package_profile_active_maintainer_count_null_without_activity_data():
     package_maintainers = {"widget": ["alice"]}
     profile = dict(build_package_profiles(package_maintainers, {}, _package_graph({}, []), [], {}))[
@@ -686,26 +619,6 @@ def test_package_profile_active_maintainer_count_from_feedstock_activity():
         )
     )["widget"]
     assert profile["active_maintainer_count"] == 2
-
-
-def test_package_profile_status_demoted_to_at_risk_when_active_count_zero():
-    package_maintainers = {"healthy": ["alice", "bob", "carol", "dave", "erin", "frank"]}
-    package_names = {"healthy-feedstock": ["healthy"]}
-    feedstock_activity: dict[str, dict] = {"healthy-feedstock": {"active_maintainers": {}}}
-    profile = dict(
-        build_package_profiles(
-            package_maintainers,
-            {},
-            _package_graph({}, []),
-            [],
-            {},
-            package_names,
-            None,
-            feedstock_activity,
-        )
-    )["healthy"]
-    assert profile["active_maintainer_count"] == 0
-    assert profile["status"] == STATUS_AT_RISK
 
 
 def test_package_profile_direct_dependencies_and_notable_dependents():
@@ -1051,3 +964,44 @@ def test_build_search_index_handles_url_encoded_download_keys() -> None:
         {}, {}, ["_libgcc_mutex", "a"], {"%5flibgcc%5fmutex": {"2024-01": 9}}
     )
     assert index["packages"] == ["_libgcc_mutex", "a"]
+
+
+def test_health_for_feedstocks_picks_highest_scoring_covered_feedstock():
+    health = {
+        "a": {"score": 40.0, "tier": "quiet", "last_activity_at": "2026-01-01"},
+        "b": {"score": 80.0, "tier": "active", "last_activity_at": "2026-09-01"},
+    }
+    chosen = site_data.health_for_feedstocks(["a", "b", "uncovered"], health)
+    assert chosen is not None
+    assert chosen["feedstock"] == "b"
+    assert chosen["score"] == 80.0
+
+
+def test_health_for_feedstocks_is_none_when_not_collected():
+    assert site_data.health_for_feedstocks(["a"], None) is None
+    assert site_data.health_for_feedstocks(["a"], {"z": {"score": 1.0}}) is None
+
+
+def test_build_package_list_row_requires_health():
+    profile = {
+        "name": "foo",
+        "downloads_last_month": 10,
+        "maintainer_count": 3,
+        "active_maintainer_count": 1,
+        "dependent_feedstock_count": 7,
+        "health": None,
+    }
+    assert site_data.build_package_list_row(profile, None) is None
+    profile["health"] = {"score": 55.5, "tier": "quiet", "last_activity_at": "2026-02-01"}
+    row = site_data.build_package_list_row(profile, {"transitive_only_ratio": 0.75})
+    assert row == {
+        "name": "foo",
+        "downloads_last_month": 10,
+        "maintainer_count": 3,
+        "active_maintainer_count": 1,
+        "last_activity_at": "2026-02-01",
+        "health_score": 55.5,
+        "health_tier": "quiet",
+        "dependent_feedstock_count": 7,
+        "transitive_only_ratio": 0.75,
+    }

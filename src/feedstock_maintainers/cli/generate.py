@@ -12,7 +12,7 @@ from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.table import Table
 
-from .. import activity, countries, feedstock_tiers
+from .. import activity, countries, feedstock_health, feedstock_tiers
 from .. import feedstock_count_history as fch
 from ..cache import RecipeCache
 from ..graph_data import (
@@ -28,11 +28,13 @@ from ..recipe import ParseError, parse_recipe
 from ..repodata import RepodataFetchError
 from ..site_data import (
     build_maintainer_profiles,
+    build_package_list_row,
     build_package_profiles,
     build_search_index,
     compute_maintainer_overview,
     compute_package_overview,
 )
+from ..teams import expand_maintainers
 from ._shared import (
     _atomic_write,
     _copy_if_exists,
@@ -395,17 +397,31 @@ def generate_maintainer_countries(
     show_default=True,
     help="Path to write the package -> maintainers JSON file.",
 )
+@click.option(
+    "--team-members-file",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=Path("team-members.json"),
+    show_default=True,
+    help="Team handle -> current members (as produced by `fetch team-members`). Team handles "
+    "such as conda-forge/r are expanded to their members (the handle itself is kept). Skipped "
+    "with a warning if it doesn't exist yet.",
+)
 def generate_package_maintainers(
-    package_names_file: Path, maintainers_file: Path, output: Path
+    package_names_file: Path, maintainers_file: Path, output: Path, team_members_file: Path
 ) -> None:
     """Join --package-names-file with --maintainers-file into a package -> maintainers lookup.
 
-    Answers "who maintains package X" directly: {package_name: [maintainer_login, ...]}.
+    Answers "who maintains package X" directly: {package_name: [maintainer_login, ...]}. Team
+    handles (e.g. conda-forge/r) are expanded to their current members from --team-members-file,
+    and the handle is kept in the list so it's still visible that the team manages the recipe.
     """
     console = Console()
 
     package_names_data = json.loads(package_names_file.read_text(encoding="utf-8"))
-    maintainers_data = json.loads(maintainers_file.read_text(encoding="utf-8"))
+    maintainers_data = expand_maintainers(
+        json.loads(maintainers_file.read_text(encoding="utf-8")),
+        _load_json_if_exists(team_members_file, console, "team handles will not be expanded"),
+    )
 
     result = build_package_maintainers(package_names_data, maintainers_data)
     _atomic_write(output, result)
@@ -768,8 +784,21 @@ def generate_feedstock_tiers(
     show_default=True,
     help="Trailing months of activity to keep in --output.",
 )
+@click.option(
+    "--team-members-file",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=Path("team-members.json"),
+    show_default=True,
+    help="Team handle -> current members (as produced by `fetch team-members`). Team handles "
+    "such as conda-forge/r are expanded to their members (the handle itself is kept). Skipped "
+    "with a warning if it doesn't exist yet.",
+)
 def generate_feedstock_activity(
-    raw_file: Path, maintainers_file: Path, output: Path, window_months: int
+    raw_file: Path,
+    maintainers_file: Path,
+    output: Path,
+    window_months: int,
+    team_members_file: Path,
 ) -> None:
     """Prune raw per-feedstock activity to the trailing window and join it against declared
     maintainers.
@@ -785,7 +814,10 @@ def generate_feedstock_activity(
     raw_data = _load_json_if_exists(
         raw_file, console, "feedstock-activity.json will have no covered feedstocks"
     )
-    maintainers_data = json.loads(maintainers_file.read_text(encoding="utf-8"))
+    maintainers_data = expand_maintainers(
+        json.loads(maintainers_file.read_text(encoding="utf-8")),
+        _load_json_if_exists(team_members_file, console, "team handles will not be expanded"),
+    )
 
     raw_entries = {
         name: activity.ActivityEntry(
@@ -805,6 +837,161 @@ def generate_feedstock_activity(
 
     console.print(
         f"[green]Done.[/] Activity computed for {len(result['feedstocks'])} feedstocks, "
+        f"written to {output}"
+    )
+
+
+@generate.command("feedstock-health")
+@click.option(
+    "--signals-file",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=Path("feedstock-health-signals-raw.json"),
+    show_default=True,
+    help="Raw signals file from `fetch feedstock-health-signals`. Skipped with a warning if it "
+    "doesn't exist yet.",
+)
+@click.option(
+    "--maintainers-file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path("maintainers.json"),
+    show_default=True,
+    help="Path to the maintainers JSON file (as produced by `generate maintainers`).",
+)
+@click.option(
+    "--activity-raw-file",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=Path("feedstock-activity-raw.json"),
+    show_default=True,
+    help="Raw merged-PR activity (for the last human merge). Optional.",
+)
+@click.option(
+    "--activity-file",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=Path("feedstock-activity.json"),
+    show_default=True,
+    help="Processed activity (for active maintainer counts). Optional.",
+)
+@click.option(
+    "--package-names-file",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=Path("package-names.json"),
+    show_default=True,
+    help="Feedstock -> package names, used to join dependency exposure. Optional.",
+)
+@click.option(
+    "--transitive-dependencies-file",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=Path("transitive-dependencies.json"),
+    show_default=True,
+    help="Dependency ranking from `generate transitive-dependencies`. Optional.",
+)
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=Path("feedstock-health.json"),
+    show_default=True,
+    help="Path to write the feedstock health JSON file.",
+)
+@click.option(
+    "--top",
+    "-n",
+    type=int,
+    default=25,
+    show_default=True,
+    help="Number of rows to print in the lowest-scoring ranking.",
+)
+@click.option(
+    "--team-members-file",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=Path("team-members.json"),
+    show_default=True,
+    help="Team handle -> current members (as produced by `fetch team-members`). Team handles "
+    "such as conda-forge/r are expanded to their members (the handle itself is kept). Skipped "
+    "with a warning if it doesn't exist yet.",
+)
+def generate_feedstock_health(
+    team_members_file: Path,
+    signals_file: Path,
+    maintainers_file: Path,
+    activity_raw_file: Path,
+    activity_file: Path,
+    package_names_file: Path,
+    transitive_dependencies_file: Path,
+    output: Path,
+    top: int,
+) -> None:
+    """Compute a relative, explainable health score for every feedstock with collected signals.
+
+    Pure and offline. Combines recency of human activity, maintainer coverage, open PR backlog,
+    and open issues into a 0-100 score (with per-component breakdown), and uses dependency
+    exposure to decide when a clearly dormant feedstock is worth surfacing. Prints the
+    lowest-scoring feedstocks as a demo ranking.
+    """
+    console = Console()
+
+    signals = _load_json_if_exists(
+        signals_file, console, "feedstock-health.json will have no covered feedstocks"
+    )
+    maintainers_data = expand_maintainers(
+        json.loads(maintainers_file.read_text(encoding="utf-8")),
+        _load_json_if_exists(team_members_file, console, "team handles will not be expanded"),
+    )
+    activity_data = _load_json_if_exists(activity_file, console, "active counts unavailable")
+    raw_activity = _load_json_if_exists(activity_raw_file, console, "last merged PR unavailable")
+    package_names = _load_json_if_exists(package_names_file, console, "exposure unavailable")
+    transitive = _load_json_if_exists(transitive_dependencies_file, console, "exposure unavailable")
+
+    last_merged: dict[str, str] = {}
+    for name, fields in raw_activity.items():
+        merged = [
+            event["merged_at"] for event in fields.get("events", []) if event.get("merged_at")
+        ]
+        if merged:
+            last_merged[name] = max(merged)
+
+    records_by_package = {r["name"]: r for r in transitive.get("packages", [])}
+    feedstock_exposure: dict[str, dict] = {}
+    for feedstock, packages in package_names.items():
+        found = [
+            records_by_package[p] for p in (packages or [feedstock]) if p in records_by_package
+        ]
+        if found:
+            feedstock_exposure[feedstock] = {
+                "transitive_dependents": max(r["transitive_dependents"] for r in found),
+                "transitive_only_ratio": max(r["transitive_only_ratio"] for r in found),
+            }
+
+    result = feedstock_health.build_feedstock_health(
+        signals,
+        maintainers_data,
+        activity_data.get("feedstocks", {}),
+        last_merged,
+        feedstock_exposure,
+        generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    )
+    _atomic_write(output, result)
+
+    ranked = sorted(result["feedstocks"].items(), key=lambda item: (item[1]["score"], item[0]))[
+        :top
+    ]
+    table = Table(title=f"{len(ranked)} lowest relative health scores")
+    table.add_column("Feedstock")
+    table.add_column("Score", justify="right")
+    table.add_column("Tier")
+    table.add_column("Last human activity")
+    table.add_column("Dependents", justify="right")
+    for name, record in ranked:
+        table.add_row(
+            name,
+            f"{record['score']:.1f}",
+            record["tier"],
+            (record["last_activity_at"] or "none found")[:10],
+            str(record["exposure"]["transitive_dependents"] or 0),
+        )
+    console.print(table)
+    console.print(
+        f"[green]Done.[/] Health computed for {len(result['feedstocks'])} feedstocks, "
         f"written to {output}"
     )
 
@@ -885,6 +1072,15 @@ def generate_feedstock_activity(
     "active_maintainer_count: null for every package (no activity data collected, not zero).",
 )
 @click.option(
+    "--feedstock-health-file",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=Path("feedstock-health.json"),
+    show_default=True,
+    help="Path to feedstock health data (as produced by `generate feedstock-health`). Skipped "
+    "with a warning (not an error) if it doesn't exist yet -- package profiles then have "
+    "health: null and package-list.json is empty.",
+)
+@click.option(
     "--package-about-file",
     type=click.Path(dir_okay=False, path_type=Path),
     default=Path("package-about.json"),
@@ -940,6 +1136,7 @@ def generate_site_data(
     transitive_dependencies_file: Path,
     license_file: Path,
     feedstock_activity_file: Path,
+    feedstock_health_file: Path,
     package_about_file: Path,
     maintainer_history_file: Path,
     feedstock_count_history_file: Path,
@@ -980,6 +1177,9 @@ def generate_site_data(
     feedstock_activity_data = _load_json_if_exists(
         feedstock_activity_file, console, "package profiles will have active_maintainer_count: null"
     ).get("feedstocks", {})
+    feedstock_health_data = _load_json_if_exists(
+        feedstock_health_file, console, "package profiles will have health: null"
+    )
     package_about_data = _load_json_if_exists(
         package_about_file, console, "package profiles will have about: null"
     )
@@ -1023,6 +1223,8 @@ def generate_site_data(
 
     console.print(f"Writing {len(package_maintainers_data)} package profile(s)...")
     package_names_list = []
+    package_list_rows = []
+    transitive_by_name = {record["name"]: record for record in transitive_dependencies_data}
     for name, profile in build_package_profiles(
         package_maintainers_data,
         maintainer_info_data,
@@ -1033,10 +1235,22 @@ def generate_site_data(
         licenses_data,
         feedstock_activity_data,
         package_about_data,
+        feedstock_health_data.get("feedstocks", {}),
     ):
         package_names_list.append(name)
         _write_json_fast(packages_dir / f"{name}.json", profile)
+        row = build_package_list_row(profile, transitive_by_name.get(name))
+        if row is not None:
+            package_list_rows.append(row)
     _atomic_write(packages_dir / "index.json", sorted(package_names_list))
+    _write_json_fast(
+        output_dir / "package-list.json",
+        {
+            "generated_at": generated_at,
+            "config": feedstock_health_data.get("config"),
+            "packages": package_list_rows,
+        },
+    )
 
     console.print("Building search-index.json...")
     _write_json_fast(
