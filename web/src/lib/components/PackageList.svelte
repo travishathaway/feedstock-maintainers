@@ -9,9 +9,16 @@
 	} from '$lib/health';
 	import { formatNumber } from '$lib/format';
 	import { scoreText } from '$lib/search';
+	import type { InspectInfo } from '$lib/env-spec';
 	import type { HealthTier, PackageListRow } from '$lib/site-data';
 
-	let { packages }: { packages: PackageListRow[] } = $props();
+	// `inspect` is set when the table shows a solved environment rather than the whole health
+	// list: rows then carry a version and a requested/dependency marker, and packages without
+	// health data are kept (as "Not scored") instead of being absent.
+	let {
+		packages,
+		inspect
+	}: { packages: PackageListRow[]; inspect?: Map<string, InspectInfo> } = $props();
 
 	// A package counts as "transitive only" when at least this share of the feedstocks that
 	// depend on it do so only through other dependencies, never directly -- the "hidden"
@@ -73,10 +80,13 @@
 	let query = $state('');
 	let tier = $state<HealthTier | 'all'>('all');
 	let transitiveOnly = $state(false);
+	let requestedOnly = $state(false);
 	let sortId = $state('attention');
 	let visible = $state(PAGE_SIZE);
 
 	function sortValue(row: PackageListRow, key: SortKey): number | null {
+		// Unscored rows have placeholder metrics; treat them as missing so they sort last.
+		if (inspect && inspect.get(row.name)?.scored === false) return null;
 		if (key === 'last_activity_at') {
 			return row.last_activity_at ? new Date(row.last_activity_at).getTime() : null;
 		}
@@ -88,6 +98,7 @@
 		const rows = packages.filter(
 			(row) =>
 				(tier === 'all' || row.health_tier === tier) &&
+				(!requestedOnly || inspect?.get(row.name)?.requested) &&
 				(!transitiveOnly ||
 					(row.transitive_only_ratio !== null &&
 						row.transitive_only_ratio >= TRANSITIVE_ONLY_MIN_RATIO)) &&
@@ -105,12 +116,12 @@
 				if (av !== bv) return (av - bv) * dir;
 			}
 			return a.name.localeCompare(b.name);
-	});
+		});
 	});
 
 	// Reset pagination whenever the result set changes shape.
 	$effect(() => {
-		void [query, tier, transitiveOnly, sortId];
+		void [query, tier, transitiveOnly, requestedOnly, sortId];
 		visible = PAGE_SIZE;
 	});
 
@@ -163,16 +174,29 @@
 			</div>
 			<div class="col-12 col-md-3">
 				<div class="form-check form-switch mb-1">
-					<input
-						id="package-filter-transitive"
-						class="form-check-input"
-						type="checkbox"
-						role="switch"
-						bind:checked={transitiveOnly}
-					/>
-					<label class="form-check-label small" for="package-filter-transitive">
-						Transitive dependencies only
-					</label>
+					{#if inspect}
+						<input
+							id="package-filter-requested"
+							class="form-check-input"
+							type="checkbox"
+							role="switch"
+							bind:checked={requestedOnly}
+						/>
+						<label class="form-check-label small" for="package-filter-requested">
+							Requested packages only
+						</label>
+					{:else}
+						<input
+							id="package-filter-transitive"
+							class="form-check-input"
+							type="checkbox"
+							role="switch"
+							bind:checked={transitiveOnly}
+						/>
+						<label class="form-check-label small" for="package-filter-transitive">
+							Transitive dependencies only
+						</label>
+					{/if}
 				</div>
 			</div>
 		</div>
@@ -190,6 +214,7 @@
 				<thead>
 					<tr>
 						<th>Package</th>
+						{#if inspect}<th>Version</th>{/if}
 						<th>Last updated</th>
 						<th class="text-end">Active maint.</th>
 						<th class="text-end">Listed maint.</th>
@@ -199,34 +224,51 @@
 				</thead>
 				<tbody>
 					{#each shown as row (row.name)}
+						{@const info = inspect?.get(row.name)}
 						<tr>
 							<td>
-								<a href={resolve('/packages/[name]', { name: encodeURIComponent(row.name) })}
-									>{row.name}</a
-								>
+								{#if info && !info.scored}
+									{row.name}
+								{:else}
+									<a href={resolve('/packages/[name]', { name: encodeURIComponent(row.name) })}
+										>{row.name}</a
+									>
+								{/if}
+								{#if info?.requested}<span class="badge text-bg-light border ms-1">requested</span>{/if}
 							</td>
-							<td class="text-secondary text-nowrap">{formatRelativeTime(row.last_activity_at)}</td>
-							<td class="text-end">
-								{row.active_maintainer_count === null
-									? '—'
-									: formatNumber(row.active_maintainer_count)}
-							</td>
-							<td class="text-end">{formatNumber(row.maintainer_count)}</td>
-							<td class="text-end">
-								{row.dependent_feedstock_count === null
-									? '—'
-									: formatNumber(row.dependent_feedstock_count)}
-							</td>
-							<td class="text-end text-nowrap">
-								<span class="me-1">{row.health_score.toFixed(0)}</span>
-								<span class="badge {HEALTH_TIER_BADGE_CLASSES[row.health_tier]}"
-									>{HEALTH_TIER_LABELS[row.health_tier]}</span
-								>
-							</td>
+							{#if inspect}<td class="text-secondary text-nowrap">{info?.version}</td>{/if}
+							{#if info && !info.scored}
+								<td class="text-secondary">—</td>
+								<td class="text-end text-secondary">—</td>
+								<td class="text-end text-secondary">—</td>
+								<td class="text-end text-secondary">—</td>
+								<td class="text-end text-nowrap">
+									<span class="badge text-bg-light border">Not scored</span>
+								</td>
+							{:else}
+								<td class="text-secondary text-nowrap">{formatRelativeTime(row.last_activity_at)}</td>
+								<td class="text-end">
+									{row.active_maintainer_count === null
+										? '—'
+										: formatNumber(row.active_maintainer_count)}
+								</td>
+								<td class="text-end">{formatNumber(row.maintainer_count)}</td>
+								<td class="text-end">
+									{row.dependent_feedstock_count === null
+										? '—'
+										: formatNumber(row.dependent_feedstock_count)}
+								</td>
+								<td class="text-end text-nowrap">
+									<span class="me-1">{row.health_score.toFixed(0)}</span>
+									<span class="badge {HEALTH_TIER_BADGE_CLASSES[row.health_tier]}"
+										>{HEALTH_TIER_LABELS[row.health_tier]}</span
+									>
+								</td>
+							{/if}
 						</tr>
 					{:else}
 						<tr>
-							<td colspan="6" class="text-center text-body-secondary py-4">
+							<td colspan={inspect ? 7 : 6} class="text-center text-body-secondary py-4">
 								No packages match these filters.
 							</td>
 						</tr>

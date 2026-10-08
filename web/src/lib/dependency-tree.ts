@@ -84,7 +84,7 @@ const NON_NOARCH_PLATFORMS = CANDIDATE_PLATFORMS.filter(
  * noarch, and offer virtual packages for all of them, so whichever
  * architecture a given dependency actually ships for is resolvable.
  */
-function virtualPackagesForSelection(platform: PlatformOption) {
+export function virtualPackagesForSelection(platform: PlatformOption) {
 	if (platform !== 'noarch') {
 		return virtualPackagesFor(platform);
 	}
@@ -102,7 +102,7 @@ function virtualPackagesForSelection(platform: PlatformOption) {
 // calls (e.g. listing versions, then platforms, for the same package) avoids re-downloading
 // repodata shards that were already fetched for an earlier query.
 let sharedGateway: Gateway | undefined;
-function getGateway(): Gateway {
+export function getGateway(): Gateway {
 	if (!sharedGateway) {
 		sharedGateway = new Gateway();
 	}

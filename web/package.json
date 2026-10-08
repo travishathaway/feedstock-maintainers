@@ -41,9 +41,11 @@
 		"mermaid": "^11.4.0",
 		"sanitize-html": "^2.17.7",
 		"sigma": "^3.0.2",
+		"smol-toml": "^1.9.0",
 		"svelte-chartjs": "^4.0.1",
 		"tom-select": "^2.6.2",
 		"topojson-client": "^3.1.0",
-		"world-atlas": "^2.0.2"
+		"world-atlas": "^2.0.2",
+		"yaml": "^2.9.1"
 	}
 }

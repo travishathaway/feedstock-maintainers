@@ -1,6 +1,9 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { resolve } from '$app/paths';
+	import { page } from '$app/state';
+	import { replaceState } from '$app/navigation';
+	import EnvironmentInspector from '$lib/components/EnvironmentInspector.svelte';
 	import PackageList from '$lib/components/PackageList.svelte';
 	import {
 		loadPackageList,
@@ -15,8 +18,18 @@
 	let error = $state<string | undefined>(undefined);
 	let listError = $state<string | undefined>(undefined);
 	let loading = $state(true);
+	let tab = $state<'all' | 'inspect'>('all');
+
+	function selectTab(next: 'all' | 'inspect') {
+		tab = next;
+		const url = new URL(page.url);
+		if (next === 'all') url.searchParams.delete('tab');
+		else url.searchParams.set('tab', next);
+		replaceState(url, page.state);
+	}
 
 	onMount(async () => {
+		if (new URL(location.href).searchParams.get('tab') === 'inspect') tab = 'inspect';
 		// The overview cards are required; the list is best-effort (it is empty/absent until
 		// health data has been collected) and must not take the whole page down with it.
 		const [overviewResult, listResult] = await Promise.allSettled([
@@ -137,7 +150,27 @@
 		</div>
 	</div>
 
-	<h3 class="h5 mt-5 mb-0">Browse packages</h3>
+	<ul class="nav nav-tabs mt-5">
+		<li class="nav-item">
+			<button
+				type="button"
+				class="nav-link"
+				class:active={tab === 'all'}
+				onclick={() => selectTab('all')}>All</button
+			>
+		</li>
+		<li class="nav-item">
+			<button
+				type="button"
+				class="nav-link"
+				class:active={tab === 'inspect'}
+				onclick={() => selectTab('inspect')}>Inspect</button
+			>
+		</li>
+	</ul>
+
+	{#if tab === 'all'}
+	<h3 class="h5 mt-4 mb-0">Browse packages</h3>
 	<p class="small text-secondary mb-0" style="max-width: 90ch">
 		Packages from the most-downloaded and most-depended-on feedstocks, with a relative health
 		score. It is a prompt to take a look, not a verdict.
@@ -150,6 +183,11 @@
 		<p class="text-body-secondary mt-3">
 			Health data hasn't been collected yet — check back after the next data refresh.
 		</p>
+	{/if}
+	{:else if packageList}
+		<EnvironmentInspector packages={packageList.packages} />
+	{:else}
+		<p class="text-body-secondary mt-3">Health data is needed to inspect an environment.</p>
 	{/if}
 {/if}
 
