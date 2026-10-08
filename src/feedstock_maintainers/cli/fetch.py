@@ -37,7 +37,7 @@ from ..github import (
 )
 from ..gitmodules import FeedstockSource, parse_gitmodules
 from ..maintainer_history import run_backfill
-from ..package_about import fetch_package_about
+from ..package_about import DEFAULT_PLATFORMS, fetch_package_about
 from ..package_downloads import (
     PackageDownloadsFetchError,
     fetch_monthly_downloads,
@@ -909,7 +909,7 @@ def fetch_package_downloads(
     "-p",
     "platforms",
     multiple=True,
-    default=("noarch", "linux-64"),
+    default=DEFAULT_PLATFORMS,
     show_default=True,
     help="Representative platform subdirs to search for each package's latest build, in "
     "preference order (noarch preferred, first remaining platform used otherwise). Repeat for "
@@ -954,6 +954,13 @@ def fetch_package_downloads(
     show_default=True,
     help="Per-platform repodata download timeout in seconds.",
 )
+@click.option(
+    "--no-repodata-cache",
+    is_flag=True,
+    default=False,
+    help="Always re-download repodata instead of reusing ./repodata_cache (entries younger than "
+    "an hour are reused as-is; older ones are revalidated by ETag).",
+)
 def fetch_package_about_cmd(
     package_maintainers_file: Path,
     platforms: tuple[str, ...],
@@ -962,6 +969,7 @@ def fetch_package_about_cmd(
     concurrency: int,
     flush_every: int,
     timeout: float,
+    no_repodata_cache: bool,
 ) -> None:
     """Fetch info/about.json metadata (description, home, dev_url, doc_url, summary,
     recipe-maintainers) for the latest version of every package, streamed directly from
@@ -977,7 +985,9 @@ def fetch_package_about_cmd(
     existing = _load_json_if_exists(output, console, "every package will be fetched fresh")
 
     try:
-        repodata_by_platform = asyncio.run(_run_fetch_repodata(list(platforms), console, timeout))
+        repodata_by_platform = asyncio.run(
+            _run_fetch_repodata(list(platforms), console, timeout, not no_repodata_cache)
+        )
     except RepodataFetchError as exc:
         raise click.ClickException(str(exc)) from None
 

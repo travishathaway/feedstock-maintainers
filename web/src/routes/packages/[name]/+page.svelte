@@ -272,24 +272,26 @@
 						under constant attention but hard to build), so it is never labelled.
 					</p>
 				{/if}
-				<ul class="list-unstyled mb-0">
+				<div class="row mb-0">
 					{#each Object.keys(HEALTH_COMPONENT_LABELS) as key (key)}
 						{@const component = key as keyof typeof HEALTH_COMPONENT_LABELS}
-						<li class="mb-2">
-							<div class="d-flex justify-content-between small">
+						<div class="col-12 col-md-6 p-2 pe-5">
+							<div class="d-flex justify-content-between small mb-2">
 								<span class="fw-semibold">{HEALTH_COMPONENT_LABELS[component]}</span>
 								<span class="text-secondary">{Math.round(health.components[component].score * 100)}%</span>
 							</div>
-							<div class="progress" style="height: 6px" aria-hidden="true">
+							<div class="progress" style="height: 10px" aria-hidden="true">
 								<div
-									class="progress-bar bg-secondary"
+									class="progress-bar bg-primary"
 									style="width: {Math.round(health.components[component].score * 100)}%"
 								></div>
 							</div>
-							<div class="small text-secondary">{describeComponent(component, health)}</div>
-						</li>
+							<div class="small text-secondary mt-1 ps-2 pe-2">
+							    {describeComponent(component, health)}
+							</div>
+						</div>
 					{/each}
-				</ul>
+				</div>
 			{:else}
 				<p class="small text-secondary mb-0">
 					Health signals are only collected for the most-downloaded and most-depended-on

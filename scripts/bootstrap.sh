@@ -3,7 +3,7 @@
 # See docs/bootstrapping.md for what each step does and why it runs where it does.
 set -euo pipefail
 
-PLATFORMS="linux-64 noarch"
+PLATFORMS="noarch linux-64 osx-arm64 win-64"
 WITH_BACKFILL=0
 WITH_SITE=0
 FORCE=""

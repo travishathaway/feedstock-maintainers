@@ -263,3 +263,56 @@ def test_cyclic_dependency_does_not_crash_and_counts_mutual_dependents():
 
     assert records["x"]["transitive_dependents"] == 1
     assert records["y"]["transitive_dependents"] == 1
+
+
+def test_platform_mapping_does_not_inflate_weights():
+    artifacts = {"foo-1.0-0.conda": _artifact("foo", ["bar"])}
+    repodata_by_platform = {
+        platform: _repodata(packages_conda=artifacts)
+        for platform in ("linux-64", "osx-arm64", "win-64")
+    }
+
+    graph = build_package_graph(repodata_by_platform)
+
+    assert graph["foo"]["bar"]["weight"] == 1
+    assert graph["foo"]["bar"]["platforms"] == ["linux-64", "osx-arm64", "win-64"]
+
+
+def test_platform_only_package_records_its_platform():
+    repodata_by_platform = {
+        "linux-64": _repodata(packages_conda={"a-1.0-0.conda": _artifact("a", ["b"])}),
+        "win-64": _repodata(packages_conda={"pywin32-1.0-0.conda": _artifact("pywin32", ["vc"])}),
+    }
+
+    graph = build_package_graph(repodata_by_platform)
+
+    assert graph.nodes["pywin32"]["platforms"] == ["win-64"]
+    assert graph.nodes["a"]["platforms"] == ["linux-64"]
+    assert "platforms" not in graph.nodes["vc"]
+    assert graph["pywin32"]["vc"]["platforms"] == ["win-64"]
+
+
+def test_platform_mapping_takes_max_artifact_count():
+    repodata_by_platform = {
+        "linux-64": _repodata(
+            packages_conda={
+                "foo-1.0-0.conda": _artifact("foo", ["bar"]),
+                "foo-1.1-0.conda": _artifact("foo", ["bar"]),
+            }
+        ),
+        "noarch": _repodata(packages_conda={"foo-1.0-1.conda": _artifact("foo", ["bar"])}),
+    }
+
+    graph = build_package_graph(repodata_by_platform)
+
+    assert graph["foo"]["bar"]["weight"] == 2
+
+
+def test_package_graph_to_json_includes_platforms():
+    graph = build_package_graph(
+        {"win-64": _repodata(packages_conda={"a-1.0-0.conda": _artifact("a", ["b"])})}
+    )
+
+    data = package_graph_to_json(graph)
+
+    assert data["edges"][0]["attributes"] == {"weight": 1, "platforms": ["win-64"]}

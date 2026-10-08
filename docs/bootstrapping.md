@@ -78,8 +78,8 @@ rm -f team-members.json
 fsm generate package-maintainers
 
 # These two download repodata.json.zst (hundreds of MB) for each platform
-fsm generate package-graph -p linux-64 -p noarch --output package-graph.json
-fsm generate transitive-dependencies -p linux-64 -p noarch --output transitive-dependencies.json
+fsm generate package-graph -p noarch -p linux-64 -p osx-arm64 -p win-64 --output package-graph.json
+fsm generate transitive-dependencies -p noarch -p linux-64 -p osx-arm64 -p win-64 --output transitive-dependencies.json
 
 # Download counts from the Anaconda S3 parquet files -> package-downloads.json
 fsm fetch package-downloads
@@ -91,7 +91,11 @@ fsm fetch package-about --package-maintainers-file package-maintainers.json
 `package-graph`, `transitive-dependencies` and `package-about` take platforms with repeated
 `-p`/`--platform` options (e.g. `linux-64`, `noarch`, `osx-arm64`). They are the only commands
 besides `fetch` that use the network. Each downloads the repodata itself, directly from
-`https://conda.anaconda.org/conda-forge/<platform>/repodata.json.zst`.
+`https://conda.anaconda.org/conda-forge/<platform>/repodata.json.zst`. Downloads are cached in
+`./repodata_cache/` (reused for an hour, then revalidated by ETag), so running the three commands
+back to back downloads each platform once; pass `--no-repodata-cache` to force a fresh download.
+Edge weights take the maximum count across platforms, so adding platforms doesn't inflate them;
+nodes and edges record the `platforms` they appear on.
 
 ## 3. Feedstock health
 

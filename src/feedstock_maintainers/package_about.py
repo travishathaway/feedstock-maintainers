@@ -9,17 +9,17 @@ unit-tested with literal fixtures; the actual network I/O (`fetch_about_json`,
 `fetch_package_about`) is not, same as `repodata.py`/`package_downloads.py`'s `fetch_*` functions.
 
 Only the latest version of each package is considered, using a single representative platform
-build per version (`noarch` preferred, else `linux-64` -- see `index_latest_builds_by_name`):
-`info/about.json` is derived from the recipe shared by every build of a version, so it does not
-meaningfully vary across platforms in practice, and this keeps fetch volume proportional to the
-number of packages rather than packages x versions x platforms.
+build per version (`noarch` preferred, else linux-64, osx-arm64, win-64 in order -- see
+`index_latest_builds_by_name`): `info/about.json` is derived from the recipe shared by every build
+of a version, so it does not meaningfully vary across platforms in practice, and this keeps fetch
+volume proportional to the number of packages rather than packages x versions x platforms.
 """
 
 from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Iterable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from rattler import AboutJson, Client, Version
@@ -31,11 +31,11 @@ _ARCHIVE_URL_TEMPLATE = "https://conda.anaconda.org/conda-forge/{subdir}/{filena
 # Platforms to search for each package's latest build, in preference order: a noarch build's
 # about.json is preferred over a platform-specific one for the same version, since every build of
 # a version is generated from the same recipe.
-DEFAULT_PLATFORMS = ("noarch", "linux-64")
+DEFAULT_PLATFORMS = ("noarch", "linux-64", "osx-arm64", "win-64")
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def index_latest_builds_by_name(

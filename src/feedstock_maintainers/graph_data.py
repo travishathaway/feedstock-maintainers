@@ -8,7 +8,7 @@ and usernames missing profile info in maintainer_info are excluded entirely from
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from itertools import combinations
 
 import networkx as nx
@@ -158,14 +158,24 @@ def _accumulate_dependency_weights(
 
 
 def build_package_graph(
-    repodata_jsons: list[dict[str, dict]],
+    repodata_jsons: Mapping[str, dict] | list[dict],
     on_step: Callable[[str], None] | None = None,
     previous_versions: int | None = None,
 ) -> nx.DiGraph:
     """Build a directed package dependency graph from one or more repodata.json contents.
 
-    Each element of `repodata_jsons` is a parsed repodata.json (as produced by conda-forge /
-    anaconda.org channel indexes), read from both the legacy `packages` key (.tar.bz2 artifacts)
+    `repodata_jsons` is either a mapping of platform (subdir) name to parsed repodata.json, or a
+    plain list of parsed repodata.json contents (legacy form).
+
+    With a mapping, each platform is accumulated separately and an edge's weight is the *maximum*
+    per-platform artifact count, so adding platforms never inflates weights (a dependency declared
+    identically on linux-64, osx-arm64 and win-64 counts once, not three times). Edges and nodes
+    additionally get a sorted `platforms` attribute listing where the dependency was declared /
+    the package is indexed. With a list, counts are summed across files and no `platforms`
+    attribute is set.
+
+    Each repodata.json is the format produced by conda-forge /
+    anaconda.org channel indexes, read from both the legacy `packages` key (.tar.bz2 artifacts)
     and the newer `packages.conda` key (.conda artifacts) -- both are merged, since both represent
     real installable artifacts and omitting either silently drops packages that only ship in one
     format.
@@ -204,11 +214,26 @@ def build_package_graph(
 
     step("Parsing repodata dependency specs")
     weights: dict[str, Counter[str]] = defaultdict(Counter)
-    for repo in repodata_jsons:
-        for key in REPODATA_PACKAGE_KEYS:
-            _accumulate_dependency_weights(
-                repo.get(key, {}), weights, previous_versions=previous_versions
-            )
+    edge_platforms: dict[tuple[str, str], set[str]] = defaultdict(set)
+    node_platforms: dict[str, set[str]] = defaultdict(set)
+    if isinstance(repodata_jsons, Mapping):
+        for platform, repo in repodata_jsons.items():
+            platform_weights: dict[str, Counter[str]] = defaultdict(Counter)
+            for key in REPODATA_PACKAGE_KEYS:
+                _accumulate_dependency_weights(
+                    repo.get(key, {}), platform_weights, previous_versions=previous_versions
+                )
+            for pkg, deps in platform_weights.items():
+                node_platforms[pkg].add(platform)
+                for dep, weight in deps.items():
+                    weights[pkg][dep] = max(weights[pkg][dep], weight)
+                    edge_platforms[(pkg, dep)].add(platform)
+    else:
+        for repo in repodata_jsons:
+            for key in REPODATA_PACKAGE_KEYS:
+                _accumulate_dependency_weights(
+                    repo.get(key, {}), weights, previous_versions=previous_versions
+                )
 
     step("Building package dependency graph")
     graph = nx.DiGraph()
@@ -219,6 +244,8 @@ def build_package_graph(
     graph.add_weighted_edges_from(
         (pkg, dep, weight) for pkg, deps in weights.items() for dep, weight in deps.items()
     )
+    for (pkg, dep), platforms in edge_platforms.items():
+        graph[pkg][dep]["platforms"] = sorted(platforms)
 
     node_count = graph.number_of_nodes()
 
@@ -227,6 +254,9 @@ def build_package_graph(
 
     step("Attaching metrics")
     nx.set_node_attributes(graph, pagerank, "pagerank")
+    nx.set_node_attributes(
+        graph, {name: sorted(plats) for name, plats in node_platforms.items()}, "platforms"
+    )
 
     return graph
 
@@ -408,7 +438,10 @@ def package_graph_to_json(graph: nx.DiGraph) -> dict:
             "source": source,
             "target": target,
             "undirected": False,
-            "attributes": {"weight": attrs["weight"]},
+            "attributes": {
+                "weight": attrs["weight"],
+                **({"platforms": attrs["platforms"]} if "platforms" in attrs else {}),
+            },
         }
         for source, target, attrs in sorted(graph.edges(data=True))
     ]

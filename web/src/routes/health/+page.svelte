@@ -18,18 +18,6 @@
 	const pct = (key: string) => (config ? `${Math.round((config.weights[key] ?? 0) * 100)}%` : '…');
 	const n = (value: number | undefined) => (value === undefined ? '…' : String(value));
 
-	const dataFlow = `flowchart LR
-    GH["GitHub GraphQL API"] --> F["fsm fetch feedstock-health-signals"]
-    ACT["feedstock-activity-raw.json (merged PRs)"] --> G
-    MAINT["maintainers.json"] --> G
-    DEP["transitive-dependencies.json"] --> G
-    F --> RAW["feedstock-health-signals-raw.json"]
-    RAW --> G["fsm generate feedstock-health"]
-    G --> H["feedstock-health.json"]
-    H --> S["fsm generate site-data"]
-    S --> P["package profile: Health card"]
-    S --> L["package-list.json: Browse packages"]`;
-
 	const composition = $derived(`flowchart TD
     R["Recent upkeep activity (${pct('recency')})"] --> SUM
     M["Maintainer coverage (${pct('maintainers')})"] --> SUM
@@ -66,30 +54,23 @@
 	const tiers = ['active', 'quiet', 'needs_attention', 'exempt'] as const;
 </script>
 
-<div class="col-12" style="max-width: 100ch">
+<div class="offset-1 offset-md-2 col-md-8 col-9" style="max-width: 80ch">
 	<h2 class="mt-5">How the health score works</h2>
 	<p class="text-body-secondary">
-		A relative signal for "does this feedstock look actively looked after?". It exists to help
-		people find feedstocks that might need an extra pair of hands, and to help maintainers see at
-		a glance what is driving a number.
+	    The primary goal of the health score is directing the attention of volunteers to feedstocks
+	    that need help or maintenance. It can additionally be used by package consumers  to have
+	    greater transparency into conda-forge is run and all the work that goes into providing
+	    these packages.
 	</p>
 
-	<div class="alert alert-secondary small" role="note">
-		<strong>It is a prompt to look, not a verdict.</strong> Plenty of healthy feedstocks are quiet
+	<div class="alert alert-warning small" role="note">
+		<strong>Remember, it's an indication, not a verdict.</strong> Plenty of healthy feedstocks are quiet
 		because the software is finished, and the score can be wrong. It is deliberately worded
 		neutrally, only ever flags feedstocks with no commits, comments or merged PRs for a long time, and is never
 		meant as a stick to beat active maintainers with.
 	</div>
 
 	<hr />
-
-	<h3 class="h4 mt-4">Where the numbers come from</h3>
-	<p>
-		Signals are collected from GitHub only for the most-downloaded and most-depended-on feedstocks
-		(collecting for every feedstock would exhaust API rate limits). Packages outside that group
-		show no score — that means <em>not collected</em>, never <em>unhealthy</em>.
-	</p>
-	<MermaidDiagram chart={dataFlow} title="From GitHub to the page you are reading" />
 
 	<h3 class="h4 mt-5">What goes into the score</h3>
 	<p>

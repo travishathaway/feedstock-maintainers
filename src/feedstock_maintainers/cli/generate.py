@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import rich_click as click
@@ -483,7 +483,16 @@ def generate_package_maintainers(
     show_default=True,
     help="Per-platform repodata download timeout in seconds.",
 )
-def generate_package_graph_data(platforms: tuple[str, ...], output: Path, timeout: float) -> None:
+@click.option(
+    "--no-repodata-cache",
+    is_flag=True,
+    default=False,
+    help="Always re-download repodata instead of reusing ./repodata_cache (entries younger than "
+    "an hour are reused as-is; older ones are revalidated by ETag).",
+)
+def generate_package_graph_data(
+    platforms: tuple[str, ...], output: Path, timeout: float, no_repodata_cache: bool
+) -> None:
     """Build a package dependency graph from conda-forge's repodata for one or more --platform.
 
     Downloads repodata.json.zst concurrently, straight from
@@ -496,7 +505,9 @@ def generate_package_graph_data(platforms: tuple[str, ...], output: Path, timeou
     console = Console()
 
     try:
-        repodata_by_platform = asyncio.run(_run_fetch_repodata(list(platforms), console, timeout))
+        repodata_by_platform = asyncio.run(
+            _run_fetch_repodata(list(platforms), console, timeout, not no_repodata_cache)
+        )
     except RepodataFetchError as exc:
         raise click.ClickException(str(exc)) from None
 
@@ -509,7 +520,7 @@ def generate_package_graph_data(platforms: tuple[str, ...], output: Path, timeou
     ) as progress:
         task = progress.add_task("Building package dependency graph...", total=None)
         graph = build_package_graph(
-            list(repodata_by_platform.values()),
+            repodata_by_platform,
             on_step=lambda description: progress.update(task, description=description + "..."),
         )
 
@@ -554,8 +565,15 @@ def generate_package_graph_data(platforms: tuple[str, ...], output: Path, timeou
     show_default=True,
     help="Per-platform repodata download timeout in seconds.",
 )
+@click.option(
+    "--no-repodata-cache",
+    is_flag=True,
+    default=False,
+    help="Always re-download repodata instead of reusing ./repodata_cache (entries younger than "
+    "an hour are reused as-is; older ones are revalidated by ETag).",
+)
 def generate_transitive_dependencies(
-    platforms: tuple[str, ...], output: Path, top: int, timeout: float
+    platforms: tuple[str, ...], output: Path, top: int, timeout: float, no_repodata_cache: bool
 ) -> None:
     """Rank packages by how many other packages depend on them only transitively, from
     conda-forge's repodata for one or more --platform.
@@ -570,7 +588,9 @@ def generate_transitive_dependencies(
     console = Console()
 
     try:
-        repodata_by_platform = asyncio.run(_run_fetch_repodata(list(platforms), console, timeout))
+        repodata_by_platform = asyncio.run(
+            _run_fetch_repodata(list(platforms), console, timeout, not no_repodata_cache)
+        )
     except RepodataFetchError as exc:
         raise click.ClickException(str(exc)) from None
 
@@ -583,7 +603,7 @@ def generate_transitive_dependencies(
     ) as progress:
         task = progress.add_task("Building package dependency graph...", total=None)
         graph = build_package_graph(
-            list(repodata_by_platform.values()),
+            repodata_by_platform,
             on_step=lambda description: progress.update(task, description=description + "..."),
         )
         progress.update(task, description="Ranking transitive-only dependencies...")
@@ -764,7 +784,7 @@ def generate_feedstock_tiers(
         "packages"
     ]
 
-    generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    generated_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     result = feedstock_tiers.compute_feedstock_tiers(
         package_names_data,
         package_downloads_data,
@@ -845,7 +865,7 @@ def generate_feedstock_activity(
         for name, fields in raw_data.items()
     }
 
-    generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    generated_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     result = activity.build_feedstock_activity(
         raw_entries, maintainers_data, generated_at, window_months=window_months
     )
@@ -985,7 +1005,7 @@ def generate_feedstock_health(
         activity_data.get("feedstocks", {}),
         last_merged,
         feedstock_exposure,
-        generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        generated_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
     )
     _atomic_write(output, result)
 
@@ -1213,7 +1233,7 @@ def generate_site_data(
         listed_counts_file, console, "team members will not be counted"
     )
 
-    generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    generated_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     output_dir.mkdir(parents=True, exist_ok=True)
     maintainers_dir = output_dir / "maintainers"

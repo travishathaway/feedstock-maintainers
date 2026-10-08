@@ -69,8 +69,14 @@ def _load_json_if_exists(path: Path, console: Console, label: str) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+REPODATA_CACHE_DIR = Path("repodata_cache")
+
+
 async def _run_fetch_repodata(
-    platforms: list[str], console: Console, timeout: float
+    platforms: list[str],
+    console: Console,
+    timeout: float,
+    use_cache: bool = True,
 ) -> dict[str, dict]:
     with Progress(
         TextColumn("[progress.description]{task.description}"),
@@ -88,4 +94,9 @@ async def _run_fetch_repodata(
         def on_progress(platform: str, downloaded: int, total: int | None) -> None:
             progress.update(tasks[platform], completed=downloaded, total=total)
 
-        return await fetch_all_repodata(platforms, timeout, on_progress=on_progress)
+        return await fetch_all_repodata(
+            platforms,
+            timeout,
+            on_progress=on_progress,
+            cache_dir=REPODATA_CACHE_DIR if use_cache else None,
+        )

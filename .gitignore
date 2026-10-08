@@ -84,6 +84,7 @@ maintainer_history_state.json
 feedstock-count-history.json
 recipe_cache/
 package_downloads_cache/
+repodata_cache/
 
 env.sh
 
