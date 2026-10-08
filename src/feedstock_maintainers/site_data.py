@@ -298,23 +298,45 @@ def compute_maintainer_overview(
     }
 
 
+def listed_maintainer_count(
+    logins: list[str],
+    feedstocks: list[str],
+    listed_counts: dict[str, int] | None,
+) -> int:
+    """People behind a package: its individually listed (non-team) logins, or -- when
+    `listed_counts` (feedstock -> head count including team members, see
+    `teams.listed_maintainer_counts`) says more -- that larger count. Only a number: who the
+    team members are is never available here."""
+    handles = team_handles(logins)
+    count = len([login for login in logins if login not in handles])
+    if listed_counts:
+        count = max([count, *(listed_counts.get(fs, 0) for fs in feedstocks)])
+    return count
+
+
 def compute_package_overview(
     package_maintainers: dict[str, list[str]],
     transitive_dependency_records: list[dict],
     package_downloads: dict[str, dict[str, int]],
     generated_at: str,
+    package_names: dict[str, list[str]] | None = None,
+    listed_counts: dict[str, int] | None = None,
 ) -> dict[str, Any]:
-    """Build the packages page's `package-overview.json` payload."""
+    """Build the packages page's `package-overview.json` payload. `listed_counts` (optional) adds
+    team members to the maintainer counts as a head count only."""
     package_maintainers = {
         name: logins for name, logins in package_maintainers.items() if not is_ignored_package(name)
     }
     package_downloads = normalize_package_downloads(package_downloads)
     package_count = len(package_maintainers)
 
-    maintainer_counts: dict[str, int] = {}
-    for name, logins in package_maintainers.items():
-        handles = team_handles(logins)
-        maintainer_counts[name] = len([login for login in logins if login not in handles])
+    feedstocks_by_package = feedstocks_by_package_name(package_names or {})
+    maintainer_counts: dict[str, int] = {
+        name: listed_maintainer_count(
+            logins, feedstocks_by_package.get(name) or [name], listed_counts
+        )
+        for name, logins in package_maintainers.items()
+    }
 
     le2_count = sum(1 for count in maintainer_counts.values() if count <= 2)
     le2_pct = (le2_count / package_count * 100) if package_count else 0.0
@@ -637,6 +659,7 @@ def build_package_profile(
     feedstock_activity: dict[str, dict] | None = None,
     package_about: dict[str, dict] | None = None,
     feedstock_health: dict[str, dict] | None = None,
+    listed_counts: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     """Build one `packages/<name>.json` payload. `normalized_package_downloads` must already be
     the output of `normalize_package_downloads`. `feedstocks` is the (sorted, non-empty) list of
@@ -650,11 +673,14 @@ def build_package_profile(
     `feedstock-health.json` (see `feedstock_health.py`); see `health_for_feedstocks` for how
     several feedstocks collapse into one and what `health: None` means."""
     handles = team_handles(maintainer_logins)
-    maintainer_count = len([login for login in maintainer_logins if login not in handles])
+    # `maintainer_count` includes team members as a number; `maintainers` never names them.
+    maintainer_count = listed_maintainer_count(maintainer_logins, feedstocks, listed_counts)
     maintainers = [
         {"login": login, "name": _display_name(login, maintainer_info)}
         for login in maintainer_logins
+        if login not in handles
     ]
+    teams = sorted(handles)
 
     transitive_record = transitive_by_name.get(name)
     dependent_feedstock_count = (
@@ -712,6 +738,7 @@ def build_package_profile(
     return {
         "name": name,
         "maintainers": maintainers,
+        "teams": teams,
         "maintainer_count": maintainer_count,
         "active_maintainer_count": active_maintainer_count,
         "dependent_feedstock_count": dependent_feedstock_count,
@@ -737,6 +764,7 @@ def build_package_profiles(
     feedstock_activity: dict[str, dict] | None = None,
     package_about: dict[str, dict] | None = None,
     feedstock_health: dict[str, dict] | None = None,
+    listed_counts: dict[str, int] | None = None,
 ) -> Iterator[tuple[str, dict[str, Any]]]:
     """Yield `(name, profile)` for every package in `package_maintainers` (sorted), excluding
     `IGNORED_PACKAGES` -- exactly the names `packages/index.json` should list.
@@ -775,5 +803,6 @@ def build_package_profiles(
                 feedstock_activity,
                 package_about,
                 feedstock_health,
+                listed_counts,
             ),
         )

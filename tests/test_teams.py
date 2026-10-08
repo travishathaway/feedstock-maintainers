@@ -34,16 +34,17 @@ def test_expand_team_handles_leaves_unknown_teams_and_plain_users_alone():
     assert teams.expand_team_handles(["conda-forge/x", "bob"], {}) == ["conda-forge/x", "bob"]
 
 
-def test_expand_maintainers_returns_input_when_no_teams_known():
-    maintainers = {"a": ["conda-forge/r"]}
-    assert teams.expand_maintainers(maintainers, {}) is maintainers
-
-
-def test_expand_maintainers_expands_every_feedstock():
-    result = teams.expand_maintainers(
-        {"r-munsell": ["conda-forge/r"], "numpy": ["alice"]}, {"conda-forge/r": ["daler"]}
+def test_listed_maintainer_counts_counts_distinct_people_only():
+    counts = teams.listed_maintainer_counts(
+        {"r-munsell": ["conda-forge/r"], "numpy": ["alice"], "pkg": ["alice", "conda-forge/r"]},
+        {"conda-forge/r": ["daler", "alice", "bob"]},
     )
-    assert result == {"r-munsell": ["conda-forge/r", "daler"], "numpy": ["alice"]}
+    assert counts == {"r-munsell": 3, "numpy": 1, "pkg": 3}
+
+
+def test_listed_maintainer_counts_without_team_data_excludes_handles():
+    assert teams.listed_maintainer_counts({"a": ["conda-forge/r", "bob"]}, {}) == {"a": 1}
+    assert teams.listed_maintainer_counts({"a": ["conda-forge/r"]}, {}) == {"a": 0}
 
 
 def test_load_team_members_tolerates_missing_and_corrupt_files(tmp_path):

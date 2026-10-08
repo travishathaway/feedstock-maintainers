@@ -577,19 +577,36 @@ def test_build_package_profiles_yields_one_per_package():
     assert set(profiles.keys()) == {"numpy", "pandas"}
 
 
-def test_package_profile_maintainer_count_excludes_team_handles_but_lists_them():
+def test_package_profile_lists_teams_separately_and_counts_members_without_naming_them():
     package_maintainers = {"widget": ["alice", "conda-forge/go"]}
     maintainer_info = {"alice": _info("alice")}
     profile = dict(
-        build_package_profiles(package_maintainers, maintainer_info, _package_graph({}, []), [], {})
+        build_package_profiles(
+            package_maintainers,
+            maintainer_info,
+            _package_graph({}, []),
+            [],
+            {},
+            listed_counts={"widget": 7},
+        )
     )["widget"]
 
+    assert profile["maintainer_count"] == 7
+    assert [m["login"] for m in profile["maintainers"]] == ["alice"]
+    assert profile["teams"] == ["conda-forge/go"]
+
+
+def test_package_profile_maintainer_count_excludes_team_handles_without_counts():
+    profile = dict(
+        build_package_profiles(
+            {"widget": ["alice", "conda-forge/go"]},
+            {"alice": _info("alice")},
+            _package_graph({}, []),
+            [],
+            {},
+        )
+    )["widget"]
     assert profile["maintainer_count"] == 1
-    logins = [m["login"] for m in profile["maintainers"]]
-    assert logins == ["alice", "conda-forge/go"]
-    names = {m["login"]: m["name"] for m in profile["maintainers"]}
-    assert names["alice"] == "alice"  # info has no "name" set -> falls back to login
-    assert names["conda-forge/go"] is None  # no profile -> plain-text sentinel
 
 
 def test_package_profile_active_maintainer_count_null_without_activity_data():

@@ -169,14 +169,21 @@ def compute_feedstock_health(
     name: str,
     signals: dict[str, Any],
     listed_maintainers: list[str],
+    listed_count_override: int | None,
     active_maintainer_count: int | None,
     last_merged_pr_at: str | None,
     transitive_dependents: int | None,
     transitive_only_ratio: float | None,
     as_of: datetime,
 ) -> dict[str, Any]:
-    """Score one feedstock. `listed_maintainers` may contain team handles (excluded from counts)."""
-    listed_count = sum(1 for login in listed_maintainers if "/" not in login)
+    """Score one feedstock. `listed_maintainers` may contain team handles (excluded from counts).
+    `listed_count_override` is the head count including team members (see
+    `teams.listed_maintainer_counts`); team membership itself is never passed in."""
+    listed_count = (
+        listed_count_override
+        if listed_count_override is not None
+        else sum(1 for login in listed_maintainers if "/" not in login)
+    )
     last_human_at = last_activity(
         signals.get("last_human_commit_at"),
         signals.get("last_human_comment_at"),
@@ -224,6 +231,7 @@ def compute_feedstock_health(
 def build_feedstock_health(
     signals: dict[str, dict[str, Any]],
     maintainers: dict[str, list[str]],
+    listed_counts: dict[str, int],
     activity: dict[str, dict[str, Any]],
     last_merged_pr_at: dict[str, str],
     feedstock_exposure: dict[str, dict[str, Any]],
@@ -246,6 +254,7 @@ def build_feedstock_health(
             name,
             fs_signals,
             maintainers.get(name, []),
+            listed_counts.get(name),
             len(act["active_maintainers"]) if act else None,
             last_merged_pr_at.get(name),
             exp.get("transitive_dependents"),

@@ -124,9 +124,9 @@
 					<td>
 						Half from listed maintainers (more is better, saturating at 3), half from maintainers
 						actually active in the last 12 months (saturating at 2). A team handle such as
-						<code>conda-forge/r</code> is expanded to the team's current members, who count as
-						people; the team itself is not counted as an extra person, and the package page still
-						shows that the team manages the recipe.
+						<code>conda-forge/r</code> counts its current members as people (only the number is
+						used; members are never listed). The team itself is not counted as an extra person,
+						and the package page still shows that the team manages the recipe.
 					</td>
 				</tr>
 				<tr>

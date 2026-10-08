@@ -154,7 +154,11 @@ export interface PackageHealth {
 
 export interface PackageProfile {
 	name: string;
+	// Individually listed maintainers only; team members are never named, only counted.
 	maintainers: PackageMaintainer[];
+	// Team handles (e.g. "conda-forge/r") that manage the recipe.
+	teams: string[];
+	// Head count, including members of the teams above.
 	maintainer_count: number;
 	// null means no GitHub activity data has been collected for this package's feedstock(s) yet
 	// (only a popularity-thresholded tier is covered) -- distinct from 0, which means activity

@@ -31,9 +31,25 @@ def _signals(
     }
 
 
-def _compute(name="foo", signals=None, listed=("a", "b", "c"), active=2, merged=None, dependents=0):
+def _compute(
+    name="foo",
+    signals=None,
+    listed=("a", "b", "c"),
+    active=2,
+    merged=None,
+    dependents=0,
+    listed_count=None,
+):
     return fh.compute_feedstock_health(
-        name, signals or _signals(10), list(listed), active, merged, dependents, 0.0, NOW
+        name,
+        signals or _signals(10),
+        list(listed),
+        listed_count,
+        active,
+        merged,
+        dependents,
+        0.0,
+        NOW,
     )
 
 
@@ -140,10 +156,17 @@ def test_team_handles_are_excluded_from_listed_count():
     assert result["components"]["maintainers"]["value"]["listed"] == 1
 
 
+def test_listed_count_override_includes_team_members_without_naming_them():
+    result = _compute(listed=("conda-forge/core",), active=None, listed_count=7)
+    assert result["components"]["maintainers"]["value"]["listed"] == 7
+    assert "conda-forge/core" not in str(result)
+
+
 def test_build_feedstock_health_joins_inputs_and_orders_nothing_for_uncollected():
     result = fh.build_feedstock_health(
         signals={"foo": _signals(10)},
         maintainers={"foo": ["a", "b"], "bar": ["x"]},
+        listed_counts={},
         activity={"foo": {"active_maintainers": {"a": {}}}},
         last_merged_pr_at={},
         feedstock_exposure={"foo": {"transitive_dependents": 50, "transitive_only_ratio": 0.4}},
@@ -161,6 +184,7 @@ def test_build_feedstock_health_skips_archived_feedstocks():
     result = fh.build_feedstock_health(
         signals={"live": _signals(10), "pynio": {"archived": True}},
         maintainers={},
+        listed_counts={},
         activity={},
         last_merged_pr_at={},
         feedstock_exposure={},

@@ -34,7 +34,7 @@ from ..site_data import (
     compute_maintainer_overview,
     compute_package_overview,
 )
-from ..teams import expand_maintainers
+from ..teams import listed_maintainer_counts
 from ._shared import (
     _atomic_write,
     _copy_if_exists,
@@ -374,6 +374,47 @@ def generate_maintainer_countries(
     )
 
 
+@generate.command("listed-maintainer-counts")
+@click.option(
+    "--maintainers-file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=Path("maintainers.json"),
+    show_default=True,
+    help="Path to the maintainers JSON file (as produced by `generate maintainers`).",
+)
+@click.option(
+    "--team-members-file",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=Path("team-members.json"),
+    show_default=True,
+    help="Transient team handle -> members file (from `fetch team-members`). Never publish or "
+    "archive it. Skipped with a warning if it doesn't exist.",
+)
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=Path("listed-maintainer-counts.json"),
+    show_default=True,
+    help="Path to write the {feedstock: number of distinct people} JSON file.",
+)
+def generate_listed_maintainer_counts(
+    maintainers_file: Path, team_members_file: Path, output: Path
+) -> None:
+    """Count the distinct people behind each feedstock, with team members included.
+
+    Writes only numbers -- never who is in a team. Run this right after `fetch team-members` and
+    delete --team-members-file afterwards.
+    """
+    console = Console()
+    result = listed_maintainer_counts(
+        json.loads(maintainers_file.read_text(encoding="utf-8")),
+        _load_json_if_exists(team_members_file, console, "team handles will count no members"),
+    )
+    _atomic_write(output, result)
+    console.print(f"[green]Done.[/] Counts for {len(result)} feedstocks written to {output}")
+
+
 @generate.command("package-maintainers")
 @click.option(
     "--package-names-file",
@@ -397,31 +438,19 @@ def generate_maintainer_countries(
     show_default=True,
     help="Path to write the package -> maintainers JSON file.",
 )
-@click.option(
-    "--team-members-file",
-    type=click.Path(dir_okay=False, path_type=Path),
-    default=Path("team-members.json"),
-    show_default=True,
-    help="Team handle -> current members (as produced by `fetch team-members`). Team handles "
-    "such as conda-forge/r are expanded to their members (the handle itself is kept). Skipped "
-    "with a warning if it doesn't exist yet.",
-)
 def generate_package_maintainers(
-    package_names_file: Path, maintainers_file: Path, output: Path, team_members_file: Path
+    package_names_file: Path, maintainers_file: Path, output: Path
 ) -> None:
     """Join --package-names-file with --maintainers-file into a package -> maintainers lookup.
 
     Answers "who maintains package X" directly: {package_name: [maintainer_login, ...]}. Team
-    handles (e.g. conda-forge/r) are expanded to their current members from --team-members-file,
-    and the handle is kept in the list so it's still visible that the team manages the recipe.
+    handles (e.g. conda-forge/r) are kept as-is and never expanded: team membership is private
+    (see `generate listed-maintainer-counts` for the head count).
     """
     console = Console()
 
     package_names_data = json.loads(package_names_file.read_text(encoding="utf-8"))
-    maintainers_data = expand_maintainers(
-        json.loads(maintainers_file.read_text(encoding="utf-8")),
-        _load_json_if_exists(team_members_file, console, "team handles will not be expanded"),
-    )
+    maintainers_data = json.loads(maintainers_file.read_text(encoding="utf-8"))
 
     result = build_package_maintainers(package_names_data, maintainers_data)
     _atomic_write(output, result)
@@ -784,21 +813,11 @@ def generate_feedstock_tiers(
     show_default=True,
     help="Trailing months of activity to keep in --output.",
 )
-@click.option(
-    "--team-members-file",
-    type=click.Path(dir_okay=False, path_type=Path),
-    default=Path("team-members.json"),
-    show_default=True,
-    help="Team handle -> current members (as produced by `fetch team-members`). Team handles "
-    "such as conda-forge/r are expanded to their members (the handle itself is kept). Skipped "
-    "with a warning if it doesn't exist yet.",
-)
 def generate_feedstock_activity(
     raw_file: Path,
     maintainers_file: Path,
     output: Path,
     window_months: int,
-    team_members_file: Path,
 ) -> None:
     """Prune raw per-feedstock activity to the trailing window and join it against declared
     maintainers.
@@ -814,10 +833,7 @@ def generate_feedstock_activity(
     raw_data = _load_json_if_exists(
         raw_file, console, "feedstock-activity.json will have no covered feedstocks"
     )
-    maintainers_data = expand_maintainers(
-        json.loads(maintainers_file.read_text(encoding="utf-8")),
-        _load_json_if_exists(team_members_file, console, "team handles will not be expanded"),
-    )
+    maintainers_data = json.loads(maintainers_file.read_text(encoding="utf-8"))
 
     raw_entries = {
         name: activity.ActivityEntry(
@@ -886,6 +902,14 @@ def generate_feedstock_activity(
     help="Dependency ranking from `generate transitive-dependencies`. Optional.",
 )
 @click.option(
+    "--listed-counts-file",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=Path("listed-maintainer-counts.json"),
+    show_default=True,
+    help="Feedstock -> head count including team members (from `generate "
+    "listed-maintainer-counts`). Optional: without it team handles contribute no people.",
+)
+@click.option(
     "--output",
     "-o",
     type=click.Path(path_type=Path, dir_okay=False),
@@ -901,17 +925,8 @@ def generate_feedstock_activity(
     show_default=True,
     help="Number of rows to print in the lowest-scoring ranking.",
 )
-@click.option(
-    "--team-members-file",
-    type=click.Path(dir_okay=False, path_type=Path),
-    default=Path("team-members.json"),
-    show_default=True,
-    help="Team handle -> current members (as produced by `fetch team-members`). Team handles "
-    "such as conda-forge/r are expanded to their members (the handle itself is kept). Skipped "
-    "with a warning if it doesn't exist yet.",
-)
 def generate_feedstock_health(
-    team_members_file: Path,
+    listed_counts_file: Path,
     signals_file: Path,
     maintainers_file: Path,
     activity_raw_file: Path,
@@ -933,10 +948,7 @@ def generate_feedstock_health(
     signals = _load_json_if_exists(
         signals_file, console, "feedstock-health.json will have no covered feedstocks"
     )
-    maintainers_data = expand_maintainers(
-        json.loads(maintainers_file.read_text(encoding="utf-8")),
-        _load_json_if_exists(team_members_file, console, "team handles will not be expanded"),
-    )
+    maintainers_data = json.loads(maintainers_file.read_text(encoding="utf-8"))
     activity_data = _load_json_if_exists(activity_file, console, "active counts unavailable")
     raw_activity = _load_json_if_exists(activity_raw_file, console, "last merged PR unavailable")
     package_names = _load_json_if_exists(package_names_file, console, "exposure unavailable")
@@ -962,9 +974,14 @@ def generate_feedstock_health(
                 "transitive_only_ratio": max(r["transitive_only_ratio"] for r in found),
             }
 
+    listed_counts = _load_json_if_exists(
+        listed_counts_file, console, "team members will not be counted"
+    )
+
     result = feedstock_health.build_feedstock_health(
         signals,
         maintainers_data,
+        listed_counts,
         activity_data.get("feedstocks", {}),
         last_merged,
         feedstock_exposure,
@@ -1072,6 +1089,14 @@ def generate_feedstock_health(
     "active_maintainer_count: null for every package (no activity data collected, not zero).",
 )
 @click.option(
+    "--listed-counts-file",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=Path("listed-maintainer-counts.json"),
+    show_default=True,
+    help="Feedstock -> head count including team members (from `generate "
+    "listed-maintainer-counts`). Skipped with a warning if it doesn't exist.",
+)
+@click.option(
     "--feedstock-health-file",
     type=click.Path(dir_okay=False, path_type=Path),
     default=Path("feedstock-health.json"),
@@ -1137,6 +1162,7 @@ def generate_site_data(
     license_file: Path,
     feedstock_activity_file: Path,
     feedstock_health_file: Path,
+    listed_counts_file: Path,
     package_about_file: Path,
     maintainer_history_file: Path,
     feedstock_count_history_file: Path,
@@ -1183,6 +1209,9 @@ def generate_site_data(
     package_about_data = _load_json_if_exists(
         package_about_file, console, "package profiles will have about: null"
     )
+    listed_counts_data = _load_json_if_exists(
+        listed_counts_file, console, "team members will not be counted"
+    )
 
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -1207,6 +1236,8 @@ def generate_site_data(
         transitive_dependencies_data,
         package_downloads_data,
         generated_at,
+        package_names_data,
+        listed_counts_data,
     )
     _atomic_write(output_dir / "package-overview.json", package_overview)
 
@@ -1236,6 +1267,7 @@ def generate_site_data(
         feedstock_activity_data,
         package_about_data,
         feedstock_health_data.get("feedstocks", {}),
+        listed_counts_data,
     ):
         package_names_list.append(name)
         _write_json_fast(packages_dir / f"{name}.json", profile)

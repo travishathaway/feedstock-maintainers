@@ -172,6 +172,9 @@
 					<td class="text-body-secondary">Maintainers</td>
 					<td class="text-end">
 						<div class="fw-semibold fs-4">{formatNumber(profile.maintainer_count)}</div>
+						{#if profile.teams.length > 0}
+							<div class="small text-secondary">managed by {profile.teams.join(', ')}</div>
+						{/if}
 						{#if profile.active_maintainer_count !== null}
 							<div class="small text-secondary">
 								{formatNumber(profile.active_maintainer_count)} active (12mo)
@@ -214,6 +217,11 @@
 				<span class="h3">{formatNumber(profile.maintainer_count)}</span>
 				<p class="mb-0">
 					Maintainers
+					{#if profile.teams.length > 0}
+						<br /><span class="text-body-secondary small"
+							>managed by {profile.teams.join(', ')}</span
+						>
+					{/if}
 					{#if profile.active_maintainer_count !== null}
 						<br /><span class="text-body-secondary small"
 							>{formatNumber(profile.active_maintainer_count)} active (12mo)</span

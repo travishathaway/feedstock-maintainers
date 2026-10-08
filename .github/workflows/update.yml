@@ -138,10 +138,15 @@ jobs:
           pixi run fsm fetch maintainer-info --maintainers-file maintainers.json
           pixi run fsm generate maintainer-countries
           pixi run fsm generate maintainer-graph --output maintainer-graph.json
-          # Resolve team handles (conda-forge/r, ...) to current members. Needs a token that can
-          # read the org's teams; without one it keeps the previous members and never fails the run.
+          # Count the people behind team handles (conda-forge/r, ...). Needs a token that can read
+          # the org's teams; without one, teams count no members and the run never fails.
+          # PRIVACY: team membership must never be cached or published. team-members.json is
+          # reduced to per-feedstock head counts and deleted straight away, so it can never end
+          # up in the archive/artifact below.
+          rm -f team-members.json
           GITHUB_TOKEN="${TEAM_READ_TOKEN:-$GITHUB_TOKEN}" pixi run fsm fetch team-members
-          [ -f team-members.json ] || echo '{}' > team-members.json
+          pixi run fsm generate listed-maintainer-counts
+          rm -f team-members.json
           pixi run fsm generate package-maintainers
           pixi run fsm generate package-graph -p linux-64 -p noarch --output package-graph.json
           pixi run fsm generate transitive-dependencies -p linux-64 -p noarch --output transitive-dependencies.json
@@ -250,6 +255,8 @@ jobs:
 
       - name: Recompile archive
         run: |
+          # PRIVACY guard: never archive (or publish) team membership.
+          if [ -e team-members.json ]; then echo "team-members.json must not be archived" >&2; exit 1; fi
           tar -czf "${{ env.ARCHIVE_NAME }}" \
             recipe_cache \
             maintainers.json \
@@ -260,7 +267,7 @@ jobs:
             package-graph.json \
             package-names.json \
             package-maintainers.json \
-            team-members.json \
+            listed-maintainer-counts.json \
             package-downloads.json \
             package-about.json \
             licenses.json \

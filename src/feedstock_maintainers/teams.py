@@ -8,12 +8,13 @@ maintainers". Two pieces fix that without losing the original information:
   handle via the GitHub Teams API (a team's membership changes over time, so this is refreshed
   on every update run).
 - `expand_team_handles`: pure; returns a maintainer list with each team's members added **and the
-  team handle itself kept**, so consumers can both count/show the real people and still say "this
-  recipe is managed by the conda-forge/r team".
+  team handle itself kept**. Only used in memory, to count distinct people.
 
-`maintainers.json` itself is deliberately left untouched (it is the raw recipe truth); expansion
-happens where maintainers are consumed -- see `generate package-maintainers`, `generate
-feedstock-health` and `generate feedstock-activity`.
+`maintainers.json` itself is deliberately left untouched (it is the raw recipe truth).
+
+PRIVACY: team membership must never be published or cached. Member lists exist only in the
+transient `team-members.json`; `listed_maintainer_counts` reduces them to per-feedstock counts
+(`generate listed-maintainer-counts`), and the workflow deletes the file before archiving.
 """
 
 from __future__ import annotations
@@ -60,13 +61,20 @@ def expand_team_handles(logins: Iterable[str], team_members: dict[str, list[str]
     return result
 
 
-def expand_maintainers(
+def listed_maintainer_counts(
     maintainers: dict[str, list[str]], team_members: dict[str, list[str]]
-) -> dict[str, list[str]]:
-    """Apply `expand_team_handles` to every feedstock's maintainer list."""
-    if not team_members:
-        return maintainers
-    return {name: expand_team_handles(logins, team_members) for name, logins in maintainers.items()}
+) -> dict[str, int]:
+    """Per feedstock, the number of distinct people (team handles excluded) once each team's
+    current members are counted in -- and *only* that number.
+
+    This is the privacy boundary: who is in a team is private, so the expanded login lists are
+    reduced to a count here and never written anywhere. `team_members` is read from a transient
+    `team-members.json` that is deleted before anything is cached or published.
+    """
+    return {
+        name: sum(1 for login in expand_team_handles(logins, team_members) if "/" not in login)
+        for name, logins in maintainers.items()
+    }
 
 
 async def fetch_team_members(
