@@ -24,7 +24,7 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
-import httpx
+import httpx2
 
 from .github import _API_VERSION, Cooldown, FetchError, RatePacer, _get_with_retries
 
@@ -78,7 +78,7 @@ def listed_maintainer_counts(
 
 
 async def fetch_team_members(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
     handle: str,
     cooldown: Cooldown,
     pacer: RatePacer,
@@ -147,7 +147,7 @@ async def run_team_members_fetch(
     result: dict[str, list[str]] = {}
     failed: list[str] = []
 
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    async with httpx2.AsyncClient(timeout=timeout) as client:
         for index, handle in enumerate(handles, start=1):
             step(f"Fetching team {handle} ({index}/{len(handles)})")
             try:

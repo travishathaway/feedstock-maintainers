@@ -290,7 +290,7 @@ def _parse_recipe_yaml_rendered(text: str, raw: dict) -> dict:
 
     Falls back to the unrendered `raw` data (never raises) if rendering breaks the file's YAML
     structure -- losing a templated package name for one feedstock is preferable to losing its
-    maintainers too, which `parse_recipe`/`extract_maintainers_from_text` get from `raw` instead.
+    maintainers too, which `parse_recipe` gets from `raw` instead.
     """
     context = _resolve_recipe_yaml_context(raw.get("context") if isinstance(raw, dict) else None)
     try:
@@ -299,27 +299,6 @@ def _parse_recipe_yaml_rendered(text: str, raw: dict) -> dict:
     except Exception:
         return raw
     return data if isinstance(data, dict) else raw
-
-
-def extract_maintainers_from_text(filename: str, text: str) -> list:
-    """Return the maintainer list found in a recipe.yaml/meta.yaml's raw text."""
-    data = _parse_recipe_yaml_raw(text) if filename == "recipe.yaml" else _parse_meta_yaml(text)
-    return _extract_from_data(data) or []
-
-
-def extract_package_names_from_text(filename: str, text: str) -> list[str]:
-    """Return the real, installable conda package name(s) found in a recipe.yaml/meta.yaml."""
-    if filename == "recipe.yaml":
-        data = _parse_recipe_yaml_rendered(text, _parse_recipe_yaml_raw(text))
-    else:
-        data = _parse_meta_yaml(text)
-    return _extract_package_names_from_data(data)
-
-
-def extract_license_from_text(filename: str, text: str) -> str | None:
-    """Return the top-level `about.license` found in a recipe.yaml/meta.yaml, or `None`."""
-    data = _parse_recipe_yaml_raw(text) if filename == "recipe.yaml" else _parse_meta_yaml(text)
-    return _extract_license_from_data(data)
 
 
 def parse_recipe(filename: str, text: str) -> tuple[list, list[str], str | None]:

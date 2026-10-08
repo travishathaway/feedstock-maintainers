@@ -5,10 +5,10 @@ from __future__ import annotations
 import asyncio
 import json
 from collections import Counter
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
-import httpx
+import httpx2
 import rich_click as click
 from rich.console import Console
 from rich.progress import (
@@ -52,7 +52,7 @@ _DEFAULT_RATE_LIMIT_WITH_TOKEN = 1.2
 
 async def _fetch_one(
     source: FeedstockSource,
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
     retries: int,
     cooldown: Cooldown,
     pacer: RatePacer,
@@ -85,11 +85,11 @@ async def _run_fetch(
     pending_flush = 0
 
     semaphore = asyncio.Semaphore(concurrency)
-    limits = httpx.Limits(max_connections=concurrency, max_keepalive_connections=concurrency)
+    limits = httpx2.Limits(max_connections=concurrency, max_keepalive_connections=concurrency)
     cooldown = Cooldown()
     pacer = RatePacer(requests_per_second)
 
-    async with httpx.AsyncClient(timeout=timeout, limits=limits, follow_redirects=True) as client:
+    async with httpx2.AsyncClient(timeout=timeout, limits=limits, follow_redirects=True) as client:
 
         async def bound(source: FeedstockSource) -> None:
             async with semaphore:
@@ -117,7 +117,7 @@ async def _run_fetch(
 
 async def _fetch_user_one(
     username: str,
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
     retries: int,
     cooldown: Cooldown,
     pacer: RatePacer,
@@ -162,11 +162,11 @@ async def _run_fetch_maintainer_info(
     pending_flush = 0
 
     semaphore = asyncio.Semaphore(concurrency)
-    limits = httpx.Limits(max_connections=concurrency, max_keepalive_connections=concurrency)
+    limits = httpx2.Limits(max_connections=concurrency, max_keepalive_connections=concurrency)
     cooldown = Cooldown()
     pacer = RatePacer(requests_per_second)
 
-    async with httpx.AsyncClient(timeout=timeout, limits=limits, follow_redirects=True) as client:
+    async with httpx2.AsyncClient(timeout=timeout, limits=limits, follow_redirects=True) as client:
 
         async def bound(username: str) -> None:
             async with semaphore:
@@ -692,7 +692,7 @@ def fetch_maintainer_history_backfill(
     `generate maintainer-history-append` on each `update.yml` run instead of re-running this.
     """
     console = Console()
-    end = (end_date or datetime.now(timezone.utc)).date()
+    end = (end_date or datetime.now(UTC)).date()
     start = start_date.date()
 
     console.print(f"Backfilling monthly snapshots from {start} through {end}")
@@ -777,7 +777,7 @@ def fetch_feedstock_count_history_backfill(
     interruption or to add new months later.
     """
     console = Console()
-    end = (end_date or datetime.now(timezone.utc)).date()
+    end = (end_date or datetime.now(UTC)).date()
     start = start_date.date()
 
     console.print(f"Backfilling monthly feedstock counts from {start} through {end}")
@@ -867,7 +867,7 @@ def fetch_package_downloads(
     the dataset's coverage begins) is silently skipped, not an error.
     """
     console = Console()
-    today = datetime.now(timezone.utc).date()
+    today = datetime.now(UTC).date()
     target_months = trailing_months(today, months)
 
     console.print(
@@ -1164,7 +1164,7 @@ def fetch_feedstock_activity(
         updated_feedstocks = None
 
     store = activity.ActivityStore(output)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     todo = [
         name
         for name in tier_members
@@ -1324,7 +1324,7 @@ def fetch_feedstock_health_signals(
     updated_feedstocks = fetch_updated_feedstocks(since, token=token) if since else None
 
     store = health_signals.HealthSignalStore(output)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     todo = [
         name
         for name in tier_members

@@ -1,7 +1,7 @@
 import asyncio
 import json
 
-import httpx
+import httpx2
 
 from feedstock_maintainers import teams
 from feedstock_maintainers.github import Cooldown, RatePacer
@@ -58,14 +58,14 @@ def test_load_team_members_tolerates_missing_and_corrupt_files(tmp_path):
 
 
 def _client(handler):
-    return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    return httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
 
 
 def test_fetch_team_members_paginates_and_sorts():
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         page = int(request.url.params["page"])
         users = [{"login": f"u{page}-{i:03d}"} for i in range(100 if page == 1 else 3)]
-        return httpx.Response(200, json=users)
+        return httpx2.Response(200, json=users)
 
     async def run():
         async with _client(handler) as client:
@@ -81,7 +81,7 @@ def test_fetch_team_members_paginates_and_sorts():
 
 def test_fetch_team_members_returns_none_for_missing_team():
     async def run():
-        async with _client(lambda request: httpx.Response(404)) as client:
+        async with _client(lambda request: httpx2.Response(404)) as client:
             return await teams.fetch_team_members(
                 client, "conda-forge/gone", Cooldown(), RatePacer(0), None
             )

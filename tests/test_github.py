@@ -1,6 +1,6 @@
 """Tests for rate-limit-aware fetching: retry/backoff, shared cooldown, Contents API.
 
-All network access is mocked via httpx.MockTransport -- no real requests, no token needed.
+All network access is mocked via httpx2.MockTransport -- no real requests, no token needed.
 """
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ import asyncio
 import base64
 import time
 
-import httpx
+import httpx2
 import pytest
 
 from feedstock_maintainers.github import (
@@ -28,8 +28,8 @@ def _source(name: str = "widget") -> FeedstockSource:
     return FeedstockSource(name=name, owner="conda-forge", repo=f"{name}-feedstock", branch="main")
 
 
-def _client(handler) -> httpx.AsyncClient:
-    return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+def _client(handler) -> httpx2.AsyncClient:
+    return httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
 
 
 # --- Cooldown / RatePacer primitives -----------------------------------------------------
@@ -109,11 +109,11 @@ def test_rate_pacer_disabled_when_rate_zero():
 def test_retry_after_header_then_success():
     calls = []
 
-    async def handler(request: httpx.Request) -> httpx.Response:
+    async def handler(request: httpx2.Request) -> httpx2.Response:
         calls.append(request)
         if len(calls) == 1:
-            return httpx.Response(429, headers={"retry-after": "0.05"})
-        return httpx.Response(200, text="ok")
+            return httpx2.Response(429, headers={"retry-after": "0.05"})
+        return httpx2.Response(200, text="ok")
 
     async def run():
         cooldown, pacer = Cooldown(), RatePacer(rate=0)
@@ -132,15 +132,15 @@ def test_retry_after_header_then_success():
 def test_rate_limit_remaining_zero_waits_for_reset():
     calls = []
 
-    async def handler(request: httpx.Request) -> httpx.Response:
+    async def handler(request: httpx2.Request) -> httpx2.Response:
         calls.append(request)
         if len(calls) == 1:
             reset = time.time() + 0.05
-            return httpx.Response(
+            return httpx2.Response(
                 403,
                 headers={"x-ratelimit-remaining": "0", "x-ratelimit-reset": str(reset)},
             )
-        return httpx.Response(200, text="ok")
+        return httpx2.Response(200, text="ok")
 
     async def run():
         cooldown, pacer = Cooldown(), RatePacer(rate=0)
@@ -161,11 +161,11 @@ def test_rate_limit_remaining_zero_waits_for_reset():
 def test_transient_5xx_falls_back_to_backoff_then_succeeds():
     calls = []
 
-    async def handler(request: httpx.Request) -> httpx.Response:
+    async def handler(request: httpx2.Request) -> httpx2.Response:
         calls.append(request)
         if len(calls) <= 2:
-            return httpx.Response(503)
-        return httpx.Response(200, text="ok")
+            return httpx2.Response(503)
+        return httpx2.Response(200, text="ok")
 
     async def run():
         cooldown, pacer = Cooldown(), RatePacer(rate=0)
@@ -181,8 +181,8 @@ def test_transient_5xx_falls_back_to_backoff_then_succeeds():
 
 
 def test_404_returns_none_without_raising():
-    async def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(404)
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(404)
 
     async def run():
         cooldown, pacer = Cooldown(), RatePacer(rate=0)
@@ -195,8 +195,8 @@ def test_404_returns_none_without_raising():
 
 
 def test_exhausted_retries_raises_fetch_error():
-    async def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(503)
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(503)
 
     async def run():
         cooldown, pacer = Cooldown(), RatePacer(rate=0)
@@ -213,8 +213,8 @@ def test_exhausted_retries_raises_fetch_error():
 
 
 def test_fetch_recipe_404_on_all_paths_returns_none():
-    async def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(404)
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(404)
 
     async def run():
         cooldown, pacer = Cooldown(), RatePacer(rate=0)
@@ -225,12 +225,12 @@ def test_fetch_recipe_404_on_all_paths_returns_none():
 
 
 def test_fetch_recipe_falls_back_to_second_path():
-    async def handler(request: httpx.Request) -> httpx.Response:
+    async def handler(request: httpx2.Request) -> httpx2.Response:
         if request.url.path.endswith("recipe.yaml"):
-            return httpx.Response(404)
+            return httpx2.Response(404)
         if request.url.path.endswith("meta.yaml"):
-            return httpx.Response(200, text="extra:\n  recipe-maintainers: [alice]\n")
-        return httpx.Response(404)
+            return httpx2.Response(200, text="extra:\n  recipe-maintainers: [alice]\n")
+        return httpx2.Response(404)
 
     async def run():
         cooldown, pacer = Cooldown(), RatePacer(rate=0)
@@ -246,12 +246,12 @@ def test_fetch_recipe_falls_back_to_second_path():
 def test_fetch_recipe_via_contents_api_decodes_base64_and_sends_auth_header():
     seen_headers = {}
 
-    async def handler(request: httpx.Request) -> httpx.Response:
+    async def handler(request: httpx2.Request) -> httpx2.Response:
         seen_headers["authorization"] = request.headers.get("authorization")
         if not request.url.path.endswith("recipe.yaml"):
-            return httpx.Response(404)
+            return httpx2.Response(404)
         content = base64.b64encode(b"extra:\n  recipe-maintainers: [bob]\n").decode()
-        return httpx.Response(200, json={"encoding": "base64", "content": content})
+        return httpx2.Response(200, json={"encoding": "base64", "content": content})
 
     async def run():
         cooldown, pacer = Cooldown(), RatePacer(rate=0)
@@ -270,9 +270,9 @@ def test_fetch_recipe_via_contents_api_decodes_base64_and_sends_auth_header():
 
 
 def test_fetch_user_info_returns_profile_json():
-    async def handler(request: httpx.Request) -> httpx.Response:
+    async def handler(request: httpx2.Request) -> httpx2.Response:
         assert request.url.path == "/users/alice"
-        return httpx.Response(200, json={"login": "alice", "id": 1})
+        return httpx2.Response(200, json={"login": "alice", "id": 1})
 
     async def run():
         cooldown, pacer = Cooldown(), RatePacer(rate=0)
@@ -284,8 +284,8 @@ def test_fetch_user_info_returns_profile_json():
 
 
 def test_fetch_user_info_404_returns_none():
-    async def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(404)
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(404)
 
     async def run():
         cooldown, pacer = Cooldown(), RatePacer(rate=0)
@@ -298,9 +298,9 @@ def test_fetch_user_info_404_returns_none():
 def test_fetch_user_info_sends_auth_header_only_when_token_given():
     seen_headers = {}
 
-    async def handler(request: httpx.Request) -> httpx.Response:
+    async def handler(request: httpx2.Request) -> httpx2.Response:
         seen_headers["authorization"] = request.headers.get("authorization")
-        return httpx.Response(200, json={"login": "alice"})
+        return httpx2.Response(200, json={"login": "alice"})
 
     async def run():
         cooldown, pacer = Cooldown(), RatePacer(rate=0)
@@ -345,7 +345,7 @@ def test_fetch_updated_feedstocks_parses_commit_messages(monkeypatch):
         has_next_page=False,
     )
 
-    monkeypatch.setattr(httpx, "post", lambda *a, **k: httpx.Response(200, json=page))
+    monkeypatch.setattr(httpx2, "post", lambda *a, **k: httpx2.Response(200, json=page))
 
     result = fetch_updated_feedstocks("2026-08-01T00:00:00Z")
 
@@ -361,9 +361,9 @@ def test_fetch_updated_feedstocks_paginates(monkeypatch):
     def fake_post(url, json=None, headers=None):
         variables = json["variables"]
         seen_cursors.append(variables["cursor"])
-        return httpx.Response(200, json=page_one if variables["cursor"] is None else page_two)
+        return httpx2.Response(200, json=page_one if variables["cursor"] is None else page_two)
 
-    monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr(httpx2, "post", fake_post)
 
     result = fetch_updated_feedstocks("2026-08-01T00:00:00Z")
 
@@ -377,9 +377,9 @@ def test_fetch_updated_feedstocks_sends_auth_header_only_when_token_given(monkey
 
     def fake_post(url, json=None, headers=None):
         seen_headers["authorization"] = headers.get("Authorization")
-        return httpx.Response(200, json=page)
+        return httpx2.Response(200, json=page)
 
-    monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr(httpx2, "post", fake_post)
     fetch_updated_feedstocks("2026-08-01T00:00:00Z", token="secret-token")
 
     assert seen_headers["authorization"] == "Bearer secret-token"
@@ -391,9 +391,9 @@ def test_fetch_updated_feedstocks_reports_progress_for_every_page_including_last
 
     def fake_post(url, json=None, headers=None):
         variables = json["variables"]
-        return httpx.Response(200, json=page_one if variables["cursor"] is None else page_two)
+        return httpx2.Response(200, json=page_one if variables["cursor"] is None else page_two)
 
-    monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr(httpx2, "post", fake_post)
 
     steps: list[str] = []
     fetch_updated_feedstocks("2026-08-01T00:00:00Z", on_step=steps.append)
@@ -408,10 +408,10 @@ def test_fetch_updated_feedstocks_retries_transient_errors_then_succeeds(monkeyp
     def fake_post(url, json=None, headers=None):
         calls.append(1)
         if len(calls) == 1:
-            return httpx.Response(503)
-        return httpx.Response(200, json=page)
+            return httpx2.Response(503)
+        return httpx2.Response(200, json=page)
 
-    monkeypatch.setattr(httpx, "post", fake_post)
+    monkeypatch.setattr(httpx2, "post", fake_post)
     monkeypatch.setattr(time, "sleep", lambda _seconds: None)
 
     result = fetch_updated_feedstocks("2026-08-01T00:00:00Z", retries=1)

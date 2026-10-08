@@ -28,11 +28,11 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-import httpx
+import httpx2
 
 from .activity import _BOT_LOGIN_DENYLIST, _OWNER, _post_graphql
 from .github import Cooldown, RatePacer
@@ -212,7 +212,7 @@ def parse_health_signals(repo_data: dict) -> dict[str, Any]:
 
 
 async def fetch_health_signals_batch(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
     feedstocks: list[str],
     cooldown: Cooldown,
     pacer: RatePacer,
@@ -237,7 +237,7 @@ async def fetch_health_signals_batch(
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 class HealthSignalStore:
@@ -301,7 +301,7 @@ async def run_health_signals_fetch(
     pacer = RatePacer(requests_per_second)
     batches = [feedstocks[i : i + batch_size] for i in range(0, len(feedstocks), batch_size)]
 
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    async with httpx2.AsyncClient(timeout=timeout) as client:
         for batch_index, batch in enumerate(batches, start=1):
             step(f"Fetching health signals batch {batch_index}/{len(batches)}")
             results = await fetch_health_signals_batch(

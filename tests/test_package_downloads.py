@@ -1,6 +1,6 @@
 """Tests for the Anaconda Package Data monthly download-stats fetch/aggregation logic.
 
-Network access is monkeypatched via httpx.MockTransport throughout -- no real requests.
+Network access is monkeypatched via httpx2.MockTransport throughout -- no real requests.
 """
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ import asyncio
 import io
 from datetime import date
 
-import httpx
+import httpx2
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
@@ -87,7 +87,7 @@ def test_aggregate_month_respects_custom_data_source_argument():
 
 def _fetch_month(month, transport, cache_dir=None, force=False):
     async def run():
-        client = httpx.AsyncClient(transport=transport)
+        client = httpx2.AsyncClient(transport=transport)
         try:
             return await pd.fetch_month_parquet(month, client, cache_dir=cache_dir, force=force)
         finally:
@@ -98,7 +98,7 @@ def _fetch_month(month, transport, cache_dir=None, force=False):
 
 def test_fetch_month_parquet_returns_bytes_on_200():
     body = b"fake-parquet-bytes"
-    transport = httpx.MockTransport(lambda request: httpx.Response(200, content=body))
+    transport = httpx2.MockTransport(lambda request: httpx2.Response(200, content=body))
 
     result = _fetch_month(date(2026, 1, 1), transport)
 
@@ -106,7 +106,7 @@ def test_fetch_month_parquet_returns_bytes_on_200():
 
 
 def test_fetch_month_parquet_returns_none_on_404():
-    transport = httpx.MockTransport(lambda request: httpx.Response(404))
+    transport = httpx2.MockTransport(lambda request: httpx2.Response(404))
 
     result = _fetch_month(date(2016, 1, 1), transport)
 
@@ -114,7 +114,7 @@ def test_fetch_month_parquet_returns_none_on_404():
 
 
 def test_fetch_month_parquet_raises_on_500():
-    transport = httpx.MockTransport(lambda request: httpx.Response(500))
+    transport = httpx2.MockTransport(lambda request: httpx2.Response(500))
 
     with pytest.raises(pd.PackageDownloadsFetchError):
         _fetch_month(date(2026, 1, 1), transport)
@@ -128,7 +128,7 @@ def test_fetch_month_parquet_uses_cache_dir_when_present(tmp_path):
     def blow_up(request):
         raise AssertionError("should not hit the network when cache is present")
 
-    transport = httpx.MockTransport(blow_up)
+    transport = httpx2.MockTransport(blow_up)
 
     result = _fetch_month(date(2026, 8, 1), transport, cache_dir=cache_dir)
 
@@ -140,7 +140,7 @@ def test_fetch_month_parquet_force_bypasses_cache(tmp_path):
     cache_dir.mkdir()
     (cache_dir / "2026-08.parquet").write_bytes(b"stale-bytes")
 
-    transport = httpx.MockTransport(lambda request: httpx.Response(200, content=b"fresh-bytes"))
+    transport = httpx2.MockTransport(lambda request: httpx2.Response(200, content=b"fresh-bytes"))
 
     result = _fetch_month(date(2026, 8, 1), transport, cache_dir=cache_dir, force=True)
 
@@ -150,7 +150,7 @@ def test_fetch_month_parquet_force_bypasses_cache(tmp_path):
 
 def test_fetch_month_parquet_writes_to_cache_dir_after_download(tmp_path):
     cache_dir = tmp_path / "cache"
-    transport = httpx.MockTransport(lambda request: httpx.Response(200, content=b"downloaded"))
+    transport = httpx2.MockTransport(lambda request: httpx2.Response(200, content=b"downloaded"))
 
     result = _fetch_month(date(2026, 8, 1), transport, cache_dir=cache_dir)
 

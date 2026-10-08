@@ -15,7 +15,7 @@ from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 
-import httpx
+import httpx2
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
@@ -66,7 +66,7 @@ def aggregate_month(
 
 async def fetch_month_parquet(
     month: date,
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
     cache_dir: Path | None = None,
     force: bool = False,
     on_progress: Callable[[int, int | None], None] | None = None,
@@ -106,7 +106,7 @@ async def fetch_month_parquet(
                 downloaded_bytes.extend(chunk)
                 downloaded += len(chunk)
                 progress(downloaded, total_bytes)
-    except httpx.HTTPError as exc:
+    except httpx2.HTTPError as exc:
         raise PackageDownloadsFetchError(
             f"{month.year}-{month.month:02d}: failed to download {url}: {exc}"
         ) from exc
@@ -137,7 +137,7 @@ async def fetch_monthly_downloads(
     """
     progress = on_progress or (lambda _month, _downloaded, _total: None)
 
-    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+    async with httpx2.AsyncClient(timeout=timeout, follow_redirects=True) as client:
 
         async def bound(month: date) -> tuple[date, bytes | None]:
             data = await fetch_month_parquet(

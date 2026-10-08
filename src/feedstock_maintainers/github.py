@@ -25,7 +25,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
-import httpx
+import httpx2
 
 from .gitmodules import FeedstockSource
 
@@ -101,7 +101,7 @@ class RatePacer:
             await asyncio.sleep(delay)
 
 
-async def _note_rate_limit(response: httpx.Response, cooldown: Cooldown) -> None:
+async def _note_rate_limit(response: httpx2.Response, cooldown: Cooldown) -> None:
     """Update the shared cooldown from whatever rate-limit signal a response carries."""
     retry_after = response.headers.get("retry-after")
     if retry_after is not None:
@@ -121,14 +121,14 @@ async def _note_rate_limit(response: httpx.Response, cooldown: Cooldown) -> None
 
 
 async def _get_with_retries(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
     url: str,
     retries: int,
     cooldown: Cooldown,
     pacer: RatePacer,
     params: dict | None = None,
     headers: dict | None = None,
-) -> httpx.Response | None:
+) -> httpx2.Response | None:
     """Return the response, None on 404, or raise FetchError after exhausting retries."""
     last_exc: Exception | None = None
 
@@ -137,7 +137,7 @@ async def _get_with_retries(
         await pacer.acquire()
         try:
             response = await client.get(url, params=params, headers=headers)
-        except httpx.TransportError as exc:
+        except httpx2.TransportError as exc:
             last_exc = exc
         else:
             if response.status_code == 200:
@@ -160,7 +160,7 @@ async def _get_with_retries(
 
 
 async def _fetch_via_raw(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
     source: FeedstockSource,
     path: str,
     retries: int,
@@ -173,7 +173,7 @@ async def _fetch_via_raw(
 
 
 async def _fetch_via_contents_api(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
     source: FeedstockSource,
     path: str,
     retries: int,
@@ -207,7 +207,7 @@ async def _fetch_via_contents_api(
 
 
 async def fetch_recipe(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
     source: FeedstockSource,
     cooldown: Cooldown,
     pacer: RatePacer,
@@ -237,7 +237,7 @@ async def fetch_recipe(
 
 
 async def fetch_user_info(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
     username: str,
     cooldown: Cooldown,
     pacer: RatePacer,
@@ -268,7 +268,7 @@ def fetch_gitmodules(ref: str = "refs/heads/main") -> str:
     owner/repo for feedstocks at a historical snapshot).
     """
     url = _FEEDSTOCK_GITMODULES.format(owner=_OWNER, repo=_REPO, ref=ref)
-    response = httpx.get(url, follow_redirects=True)
+    response = httpx2.get(url, follow_redirects=True)
     response.raise_for_status()
 
     try:
@@ -302,12 +302,12 @@ def fetch_updated_feedstocks(
         last_exc: Exception | None = None
         for attempt in range(retries + 1):
             try:
-                response = httpx.post(
+                response = httpx2.post(
                     _GRAPHQL_URL,
                     json={"query": query, "variables": _variables or {}},
                     headers=headers,
                 )
-            except httpx.TransportError as exc:
+            except httpx2.TransportError as exc:
                 last_exc = exc
             else:
                 if response.status_code == 200:

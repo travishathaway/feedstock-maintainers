@@ -1,17 +1,17 @@
 """Tests for the feedstock activity signal: GraphQL query building/parsing, bot filtering, the
 flat-file ActivityStore cache, and the pure window-pruning/join step.
 
-Network access is mocked via httpx.MockTransport -- no real requests, no token needed.
+Network access is mocked via httpx2.MockTransport -- no real requests, no token needed.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
-import httpx
+import httpx2
 
 from feedstock_maintainers import activity as act
 from feedstock_maintainers.github import Cooldown, RatePacer
@@ -128,13 +128,13 @@ def test_parse_activity_page_reads_page_info():
 # --- fetch_activity_batch: pagination + batching over a mocked transport -----------------------
 
 
-def _client(handler) -> httpx.AsyncClient:
-    return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+def _client(handler) -> httpx2.AsyncClient:
+    return httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
 
 
 def test_fetch_activity_batch_merges_events_across_feedstocks():
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200,
             json={
                 "data": {
@@ -167,10 +167,10 @@ def test_fetch_activity_batch_merges_events_across_feedstocks():
 def test_fetch_activity_batch_follows_pagination_per_feedstock():
     calls = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         calls.append(json.loads(request.content)["variables"])
         if len(calls) == 1:
-            return httpx.Response(
+            return httpx2.Response(
                 200,
                 json={
                     "data": {
@@ -182,7 +182,7 @@ def test_fetch_activity_batch_follows_pagination_per_feedstock():
                     }
                 },
             )
-        return httpx.Response(
+        return httpx2.Response(
             200,
             json={
                 "data": {
@@ -209,8 +209,8 @@ def test_fetch_activity_batch_follows_pagination_per_feedstock():
 
 
 def test_fetch_activity_batch_missing_repo_alias_is_dropped_not_retried():
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200,
             json={
                 "data": {
@@ -235,28 +235,28 @@ def test_fetch_activity_batch_missing_repo_alias_is_dropped_not_retried():
 
 def test_activity_store_should_fetch_never_seen():
     store = act.ActivityStore(Path("/nonexistent/feedstock-activity-raw.json"))
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     assert store.should_fetch("widget", None, force=False, as_of=now) is True
 
 
 def test_activity_store_should_fetch_false_when_fresh_and_not_updated(tmp_path):
     store = act.ActivityStore(tmp_path / "raw.json")
     store.record("widget", tier="top", events=[], bot_merged_count=0)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     assert store.should_fetch("widget", set(), force=False, as_of=now) is False
 
 
 def test_activity_store_should_fetch_true_when_in_updated_set(tmp_path):
     store = act.ActivityStore(tmp_path / "raw.json")
     store.record("widget", tier="top", events=[], bot_merged_count=0)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     assert store.should_fetch("widget", {"widget"}, force=False, as_of=now) is True
 
 
 def test_activity_store_should_fetch_true_when_stale(tmp_path):
     store = act.ActivityStore(tmp_path / "raw.json")
     store.record("widget", tier="top", events=[], bot_merged_count=0)
-    far_future = datetime.now(timezone.utc) + timedelta(days=100)
+    far_future = datetime.now(UTC) + timedelta(days=100)
     assert (
         store.should_fetch(
             "widget", set(), force=False, as_of=far_future, staleness=timedelta(days=35)
@@ -268,7 +268,7 @@ def test_activity_store_should_fetch_true_when_stale(tmp_path):
 def test_activity_store_should_fetch_true_when_forced(tmp_path):
     store = act.ActivityStore(tmp_path / "raw.json")
     store.record("widget", tier="top", events=[], bot_merged_count=0)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     assert store.should_fetch("widget", set(), force=True, as_of=now) is True
 
 
@@ -441,3 +441,78 @@ def test_build_feedstock_activity_carries_bot_merged_count_and_tier():
     record = result["feedstocks"]["widget"]
     assert record["bot_merged_pr_count"] == 42
     assert record["tier"] == "top"
+
+
+# --- _post_graphql: robust error handling -------------------------------------------------------
+
+
+async def _no_sleep(_seconds):
+    return None
+
+
+def _post(handler, retries=1):
+    async def run():
+        async with _client(handler) as client:
+            return await act._post_graphql(
+                client, "query{}", {}, None, retries, Cooldown(), RatePacer(rate=0)
+            )
+
+    return asyncio.run(run())
+
+
+def test_post_graphql_retries_non_json_200_then_succeeds(monkeypatch):
+    monkeypatch.setattr(act.asyncio, "sleep", _no_sleep)
+    calls = []
+
+    def handler(request):
+        calls.append(1)
+        if len(calls) == 1:
+            return httpx2.Response(200, text="")
+        return httpx2.Response(200, json={"data": {"ok": 1}})
+
+    assert _post(handler) == {"ok": 1}
+    assert len(calls) == 2
+
+
+def test_post_graphql_non_json_200_error_includes_body(monkeypatch):
+    monkeypatch.setattr(act.asyncio, "sleep", _no_sleep)
+
+    def handler(request):
+        return httpx2.Response(200, text="<html>Bad gateway page</html>")
+
+    try:
+        _post(handler)
+    except act.FetchError as exc:
+        assert "non-JSON" in str(exc)
+        assert "Bad gateway page" in str(exc)
+    else:
+        raise AssertionError("expected FetchError")
+
+
+def test_post_graphql_http_error_includes_body():
+    def handler(request):
+        return httpx2.Response(401, json={"message": "Bad credentials"})
+
+    try:
+        _post(handler)
+    except act.FetchError as exc:
+        assert "401" in str(exc)
+        assert "Bad credentials" in str(exc)
+    else:
+        raise AssertionError("expected FetchError")
+
+
+def test_post_graphql_retries_transient_graphql_errors(monkeypatch):
+    monkeypatch.setattr(act.asyncio, "sleep", _no_sleep)
+    calls = []
+
+    def handler(request):
+        calls.append(1)
+        if len(calls) == 1:
+            return httpx2.Response(
+                200, json={"errors": [{"type": "RESOURCE_LIMITS_EXCEEDED", "message": "slow"}]}
+            )
+        return httpx2.Response(200, json={"data": {"ok": 1}})
+
+    assert _post(handler) == {"ok": 1}
+    assert len(calls) == 2

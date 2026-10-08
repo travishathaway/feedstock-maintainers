@@ -12,7 +12,7 @@ import io
 import json
 from collections.abc import Callable
 
-import httpx
+import httpx2
 import zstandard
 
 _REPODATA_URL = "https://conda.anaconda.org/conda-forge/{platform}/repodata.json.zst"
@@ -24,7 +24,7 @@ class RepodataFetchError(Exception):
 
 async def fetch_repodata(
     platform: str,
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
     on_progress: Callable[[int, int | None], None] | None = None,
 ) -> dict:
     """Download and decompress conda-forge's repodata.json.zst for a single platform.
@@ -48,7 +48,7 @@ async def fetch_repodata(
                 compressed.extend(chunk)
                 downloaded += len(chunk)
                 progress(downloaded, total_bytes)
-    except httpx.HTTPError as exc:
+    except httpx2.HTTPError as exc:
         raise RepodataFetchError(f"{platform}: failed to download {url}: {exc}") from exc
 
     try:
@@ -72,7 +72,7 @@ async def fetch_all_repodata(
     """
     progress = on_progress or (lambda _platform, _downloaded, _total: None)
 
-    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+    async with httpx2.AsyncClient(timeout=timeout, follow_redirects=True) as client:
 
         async def bound(platform: str) -> dict:
             return await fetch_repodata(

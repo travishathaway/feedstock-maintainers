@@ -14,12 +14,12 @@ The project has two parts:
   public GitHub profile, builds a maintainer collaboration graph and a conda package dependency
   graph, and links the two together so you can ask things like "who maintains package X?" or
   "which heavily-depended-on packages have the fewest maintainers?".
-- **Web app (Svelte)** — visualizes the maintainer collaboration graph in the browser.
+- **Web app (Svelte)** — browse maintainer and package profiles, the collaboration graph, feedstock health and history.
 
 ## How it works
 
 The CLI is split into three pipelines that build on each other. Each command reads its inputs
-from local JSON files and writes its output to a local JSON file, so you can re-run any single
+from local JSON files (or, for `fetch` and the repodata-based `generate` commands, the network) and writes its output to a local JSON file, so you can re-run any single
 step without redoing the ones before it.
 
 ### 1. Maintainer pipeline
@@ -100,63 +100,17 @@ export GITHUB_TOKEN='ghp_...'
 
 `feedstock-maintainers` and `fsm` are equivalent entrypoints (`fsm` is just shorter to type).
 
+The commands depend on each other's output files, so the order matters. See
+[`docs/bootstrapping.md`](docs/bootstrapping.md) for the full sequence, and
+[`scripts/bootstrap.sh`](scripts/bootstrap.sh) to run all of it from scratch:
+
 ```sh
-# install dependencies and drop into the project environment
 pixi install
-pixi shell
-
-# ── Maintainer pipeline ────────────────────────────────────────────────────
-# 1. fetch feedstock recipes (fetches .gitmodules from conda-forge/feedstocks)
-fsm fetch feedstocks
-
-# 2. extract maintainers + real package name(s) from the cached recipes
-fsm generate maintainers
-
-# 3. fetch each maintainer's GitHub profile info
-fsm fetch maintainer-info
-
-# 4. build the collaboration graph consumed by the web app
-fsm generate maintainer-graph --output web/static/data/maintainer-graph.json
-
-# ── Package pipeline (see "Platforms" below) ────────────────────────────────
-# 5. build the package dependency graph (downloads repodata.json.zst from conda-forge)
-fsm generate package-graph -p linux-64 -p noarch
-
-# 6. rank packages by transitive-only dependents (same download, same --platform options)
-fsm generate transitive-dependencies -p linux-64 -p noarch
-
-# ── Link the two together ──────────────────────────────────────────────────
-# 7. who maintains each package?
-fsm generate package-maintainers
-
-# 8. maintainer-count stats + "heavily depended on, few maintainers" ranking
-fsm generate maintainer-coverage
+export GITHUB_TOKEN='ghp_...'
+scripts/bootstrap.sh --help
 ```
 
-Every command has `--help` for its full option list (e.g. `fsm generate maintainers --help`).
-Each step is resumable and safe to re-run — already-cached or already-fetched entries are skipped
-by default (pass `--force` to re-fetch everything in the `fetch` commands). All `generate`
-commands are pure local computation (no network access) and read/write plain JSON files, so
-you're free to point `--output`/`-o` and the various `--*-file` options wherever you like;
-the defaults above (`maintainers.json`, `package-names.json`, `maintainer-info.json`,
-`package-maintainers.json`, `transitive-dependencies.json`, `maintainer-coverage.json`, ...) all
-live in the current directory. Equivalent Pixi tasks for every fixed-argument command are defined
-in `pyproject.toml` (e.g. `pixi run fetch-feedstocks`, `pixi run generate-maintainer-coverage`);
-`generate package-graph` and `generate transitive-dependencies` take variable `--platform`
-options, so they're run directly via `fsm`/`pixi run fsm generate ...` instead.
-
-#### Platforms
-
-`generate package-graph` and `generate transitive-dependencies` both download `repodata.json.zst`
-for each `--platform`/`-p` you pass (e.g. `linux-64`, `noarch`, `linux-aarch64`, `osx-arm64`, ...)
-concurrently, straight from
-`https://conda.anaconda.org/conda-forge/<platform>/repodata.json.zst`, decompress it in memory,
-and read both legacy `.tar.bz2` and newer `.conda` artifacts automatically -- no local file
-needed.
-
-These files are large (hundreds of MB uncompressed); pass as many subdirs as you want covered
-(`linux-64`, `noarch`, `osx-arm64`, ...) as positional arguments -- both legacy `.tar.bz2` and
-newer `.conda` artifacts in each file are read automatically.
+Every command has `--help` for its options (e.g. `fsm generate maintainers --help`).
 
 Run the test suite with:
 

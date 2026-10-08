@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 from datetime import date
 
-import httpx
+import httpx2
 import pytest
 
 from feedstock_maintainers import maintainer_history as mh
@@ -34,7 +34,7 @@ def _state(shas: dict[str, str], maintainers: dict[str, list[str]]) -> mh.Mainta
 
 def _build_snapshot(previous, target_date):
     async def run():
-        client = httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(404)))
+        client = httpx2.AsyncClient(transport=httpx2.MockTransport(lambda r: httpx2.Response(404)))
         try:
             return await mh.build_snapshot(
                 previous, target_date, client, Cooldown(), RatePacer(rate=0)
@@ -82,21 +82,21 @@ def test_diff_submodule_trees_no_changes():
     assert mh.diff_submodule_trees(shas, dict(shas)) == (set(), set(), set())
 
 
-# --- resolve_commit_at / fetch_submodule_tree (mocked httpx.get) ---------------------------
+# --- resolve_commit_at / fetch_submodule_tree (mocked httpx2.get) ---------------------------
 
 
 def test_resolve_commit_at_returns_first_commit_sha(monkeypatch):
     def fake_get(url, params=None, headers=None, follow_redirects=True):
         assert params["until"] == "2024-01-31T23:59:59Z"
-        return httpx.Response(200, json=[{"sha": "abc123"}])
+        return httpx2.Response(200, json=[{"sha": "abc123"}])
 
-    monkeypatch.setattr(httpx, "get", fake_get)
+    monkeypatch.setattr(httpx2, "get", fake_get)
 
     assert mh.resolve_commit_at(date(2024, 1, 31)) == "abc123"
 
 
 def test_resolve_commit_at_returns_none_when_no_commits_yet(monkeypatch):
-    monkeypatch.setattr(httpx, "get", lambda *a, **k: httpx.Response(200, json=[]))
+    monkeypatch.setattr(httpx2, "get", lambda *a, **k: httpx2.Response(200, json=[]))
     assert mh.resolve_commit_at(date(2010, 1, 1)) is None
 
 
@@ -118,9 +118,9 @@ def test_fetch_submodule_tree_filters_to_submodule_entries(monkeypatch):
 
     def fake_get(url, params=None, headers=None, follow_redirects=True):
         seen_params.update(params or {})
-        return httpx.Response(200, json=payload)
+        return httpx2.Response(200, json=payload)
 
-    monkeypatch.setattr(httpx, "get", fake_get)
+    monkeypatch.setattr(httpx2, "get", fake_get)
 
     result = mh.fetch_submodule_tree("deadbeef")
 
@@ -130,14 +130,14 @@ def test_fetch_submodule_tree_filters_to_submodule_entries(monkeypatch):
 
 def test_fetch_submodule_tree_raises_on_truncation(monkeypatch):
     payload = {"tree": [], "truncated": True}
-    monkeypatch.setattr(httpx, "get", lambda *a, **k: httpx.Response(200, json=payload))
+    monkeypatch.setattr(httpx2, "get", lambda *a, **k: httpx2.Response(200, json=payload))
 
     with pytest.raises(FetchError, match="truncated"):
         mh.fetch_submodule_tree("deadbeef")
 
 
 def test_fetch_submodule_tree_raises_when_commit_missing(monkeypatch):
-    monkeypatch.setattr(httpx, "get", lambda *a, **k: httpx.Response(404))
+    monkeypatch.setattr(httpx2, "get", lambda *a, **k: httpx2.Response(404))
 
     with pytest.raises(FetchError):
         mh.fetch_submodule_tree("deadbeef")

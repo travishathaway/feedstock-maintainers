@@ -6,11 +6,20 @@ import pytest
 
 from feedstock_maintainers.recipe import (
     ParseError,
-    extract_license_from_text,
-    extract_maintainers_from_text,
-    extract_package_names_from_text,
     parse_recipe,
 )
+
+
+def extract_maintainers_from_text(filename: str, text: str) -> list:
+    return parse_recipe(filename, text)[0]
+
+
+def extract_package_names_from_text(filename: str, text: str) -> list[str]:
+    return parse_recipe(filename, text)[1]
+
+
+def extract_license_from_text(filename: str, text: str) -> str | None:
+    return parse_recipe(filename, text)[2]
 
 
 def test_extract_maintainers_from_meta_yaml():

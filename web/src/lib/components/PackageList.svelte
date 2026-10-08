@@ -19,20 +19,61 @@
 	const TRANSITIVE_ONLY_MIN_RATIO = 0.9;
 	const PAGE_SIZE = 50;
 
-	type SortKey = 'health_score' | 'last_activity_at' | 'active_maintainer_count' | 'maintainer_count';
+	type SortKey =
+		| 'health_score'
+		| 'dependent_feedstock_count'
+		| 'downloads_last_month'
+		| 'last_activity_at'
+		| 'active_maintainer_count'
+		| 'maintainer_count';
+	type SortSpec = { key: SortKey; dir: 1 | -1 };
 
-	const SORT_OPTIONS: { key: SortKey; label: string }[] = [
-		{ key: 'health_score', label: 'Health score' },
-		{ key: 'last_activity_at', label: 'Last updated' },
-		{ key: 'active_maintainer_count', label: 'Active maintainers' },
-		{ key: 'maintainer_count', label: 'Listed maintainers' }
+	// Each preset is an ordered list of keys; later keys break ties in earlier ones.
+	const SORT_PRESETS: { id: string; label: string; specs: SortSpec[] }[] = [
+		{
+			id: 'attention',
+			label: 'Needs attention (lowest health, most dependents)',
+			specs: [
+				{ key: 'health_score', dir: 1 },
+				{ key: 'dependent_feedstock_count', dir: -1 }
+			]
+		},
+		{ id: 'health', label: 'Health score (lowest first)', specs: [{ key: 'health_score', dir: 1 }] },
+		{
+			id: 'dependents',
+			label: 'Dependents (most first)',
+			specs: [{ key: 'dependent_feedstock_count', dir: -1 }]
+		},
+		{
+			id: 'dependents-health',
+			label: 'Dependents (most first), then lowest health',
+			specs: [
+				{ key: 'dependent_feedstock_count', dir: -1 },
+				{ key: 'health_score', dir: 1 }
+			]
+		},
+		{
+			id: 'downloads',
+			label: 'Downloads (most first)',
+			specs: [{ key: 'downloads_last_month', dir: -1 }]
+		},
+		{ id: 'updated', label: 'Last updated (oldest first)', specs: [{ key: 'last_activity_at', dir: 1 }] },
+		{
+			id: 'active-maintainers',
+			label: 'Active maintainers (fewest first)',
+			specs: [{ key: 'active_maintainer_count', dir: 1 }]
+		},
+		{
+			id: 'maintainers',
+			label: 'Listed maintainers (fewest first)',
+			specs: [{ key: 'maintainer_count', dir: 1 }]
+		}
 	];
 
 	let query = $state('');
 	let tier = $state<HealthTier | 'all'>('all');
 	let transitiveOnly = $state(false);
-	let sortKey = $state<SortKey>('health_score');
-	let ascending = $state(true);
+	let sortId = $state('attention');
 	let visible = $state(PAGE_SIZE);
 
 	function sortValue(row: PackageListRow, key: SortKey): number | null {
@@ -52,21 +93,24 @@
 						row.transitive_only_ratio >= TRANSITIVE_ONLY_MIN_RATIO)) &&
 				(!q || scoreText(row.name, q) !== null)
 		);
-		const direction = ascending ? 1 : -1;
+		const specs = (SORT_PRESETS.find((preset) => preset.id === sortId) ?? SORT_PRESETS[0]).specs;
 		return rows.sort((a, b) => {
-			const av = sortValue(a, sortKey);
-			const bv = sortValue(b, sortKey);
-			// Missing values always sort last, whichever direction is chosen.
-			if (av === null && bv === null) return a.name.localeCompare(b.name);
-			if (av === null) return 1;
-			if (bv === null) return -1;
-			return av === bv ? a.name.localeCompare(b.name) : (av - bv) * direction;
-		});
+			for (const { key, dir } of specs) {
+				const av = sortValue(a, key);
+				const bv = sortValue(b, key);
+				// Missing values always sort last, whichever direction is chosen.
+				if (av === null && bv === null) continue;
+				if (av === null) return 1;
+				if (bv === null) return -1;
+				if (av !== bv) return (av - bv) * dir;
+			}
+			return a.name.localeCompare(b.name);
+	});
 	});
 
 	// Reset pagination whenever the result set changes shape.
 	$effect(() => {
-		void [query, tier, transitiveOnly, sortKey, ascending];
+		void [query, tier, transitiveOnly, sortId];
 		visible = PAGE_SIZE;
 	});
 
@@ -90,7 +134,7 @@
 <div class="card text-bg-light mt-4">
 	<div class="card-body">
 		<div class="row g-2 align-items-end mb-3">
-			<div class="col-12 col-md-4">
+			<div class="col-12 col-md-3">
 				<label class="form-label small mb-1" for="package-filter-query">Filter by name</label>
 				<input
 					id="package-filter-query"
@@ -109,24 +153,13 @@
 					{/each}
 				</select>
 			</div>
-			<div class="col-6 col-md-3">
+			<div class="col-6 col-md-4">
 				<label class="form-label small mb-1" for="package-sort-key">Sort by</label>
-				<div class="input-group input-group-sm">
-					<select id="package-sort-key" class="form-select" bind:value={sortKey}>
-						{#each SORT_OPTIONS as option (option.key)}
-							<option value={option.key}>{option.label}</option>
-						{/each}
-					</select>
-					<button
-						type="button"
-						class="btn btn-outline-secondary"
-						onclick={() => (ascending = !ascending)}
-						aria-label={ascending ? 'Sorted ascending, switch to descending' : 'Sorted descending, switch to ascending'}
-						title={ascending ? 'Ascending' : 'Descending'}
-					>
-						<i class="bi {ascending ? 'bi-sort-up' : 'bi-sort-down'}"></i>
-					</button>
-				</div>
+				<select id="package-sort-key" class="form-select form-select-sm" bind:value={sortId}>
+					{#each SORT_PRESETS as preset (preset.id)}
+						<option value={preset.id}>{preset.label}</option>
+					{/each}
+				</select>
 			</div>
 			<div class="col-12 col-md-3">
 				<div class="form-check form-switch mb-1">

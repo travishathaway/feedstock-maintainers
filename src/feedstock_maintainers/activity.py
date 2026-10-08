@@ -29,11 +29,11 @@ import random
 from collections import Counter, defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-import httpx
+import httpx2
 
 from .github import Cooldown, FetchError, RatePacer
 
@@ -179,7 +179,7 @@ def parse_activity_page(alias_data: dict) -> ParsedActivityPage:
 # --- Async fetch loop, reusing github.py's Cooldown/RatePacer --------------------------------
 
 
-async def _apply_rate_limit_headers(response: httpx.Response, cooldown: Cooldown) -> None:
+async def _apply_rate_limit_headers(response: httpx2.Response, cooldown: Cooldown) -> None:
     retry_after = response.headers.get("retry-after")
     if retry_after is not None:
         try:
@@ -197,8 +197,32 @@ async def _apply_rate_limit_headers(response: httpx.Response, cooldown: Cooldown
             pass
 
 
+def _body_snippet(response: httpx2.Response, limit: int = 500) -> str:
+    """Short, single-line preview of a response body for error messages."""
+    text = response.text.strip()
+    if not text:
+        return "<empty body>"
+    return " ".join(text[:limit].split())
+
+
+def _is_retryable_graphql_error(errors: Any) -> bool:
+    """True for GraphQL-level failures worth retrying (rate limits, resource limits, timeouts)."""
+    if not isinstance(errors, list):
+        return False
+    for err in errors:
+        if not isinstance(err, dict):
+            continue
+        kind = str(err.get("type", "")).upper()
+        message = str(err.get("message", "")).lower()
+        if kind in {"RATE_LIMITED", "RESOURCE_LIMITS_EXCEEDED", "TIMEOUT"} or any(
+            hint in message for hint in ("rate limit", "abuse", "timeout", "timed out", "try again")
+        ):
+            return True
+    return False
+
+
 async def _post_graphql(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
     query: str,
     variables: dict[str, Any],
     token: str | None,
@@ -218,21 +242,41 @@ async def _post_graphql(
             response = await client.post(
                 _GRAPHQL_URL, json={"query": query, "variables": variables}, headers=headers
             )
-        except httpx.TransportError as exc:
-            last_exc = exc
+        except (httpx2.TransportError, httpx2.DecodingError) as exc:
+            last_exc = FetchError(f"{type(exc).__name__}: {exc}")
         else:
             if response.status_code == 200:
-                payload = response.json()
-                if not payload.get("data"):
-                    raise FetchError(f"GraphQL errors: {payload.get('errors')}")
-                return payload["data"]
-            if response.status_code in (403, 429):
+                try:
+                    payload = response.json()
+                except ValueError:
+                    # Empty/HTML/truncated body on a 200 (proxy page, dropped connection, ...):
+                    # treat as transient and keep the body so the real cause is visible.
+                    last_exc = FetchError(
+                        f"HTTP 200 with non-JSON body from {_GRAPHQL_URL}: "
+                        f"{_body_snippet(response)}"
+                    )
+                else:
+                    errors = payload.get("errors") if isinstance(payload, dict) else None
+                    if isinstance(payload, dict) and payload.get("data"):
+                        return payload["data"]
+                    if _is_retryable_graphql_error(errors):
+                        await _apply_rate_limit_headers(response, cooldown)
+                        last_exc = FetchError(f"GraphQL errors (transient): {errors}")
+                    else:
+                        raise FetchError(f"GraphQL errors: {errors or _body_snippet(response)}")
+            elif response.status_code in (403, 429):
                 await _apply_rate_limit_headers(response, cooldown)
-                last_exc = FetchError(f"HTTP {response.status_code} for {_GRAPHQL_URL}")
+                last_exc = FetchError(
+                    f"HTTP {response.status_code} for {_GRAPHQL_URL}: {_body_snippet(response)}"
+                )
             elif response.status_code >= 500:
-                last_exc = FetchError(f"HTTP {response.status_code} for {_GRAPHQL_URL}")
+                last_exc = FetchError(
+                    f"HTTP {response.status_code} for {_GRAPHQL_URL}: {_body_snippet(response)}"
+                )
             else:
-                raise FetchError(f"HTTP {response.status_code} for {_GRAPHQL_URL}")
+                raise FetchError(
+                    f"HTTP {response.status_code} for {_GRAPHQL_URL}: {_body_snippet(response)}"
+                )
 
         if attempt < retries:
             base = 0.5 * (2**attempt)
@@ -250,7 +294,7 @@ class ActivityBatchResult:
 
 
 async def fetch_activity_batch(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
     feedstocks: list[str],
     since_date: str,
     cooldown: Cooldown,
@@ -317,7 +361,7 @@ class ActivityEntry:
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 class ActivityStore:
@@ -463,7 +507,7 @@ async def run_activity_fetch(
     pacer = RatePacer(requests_per_second)
     batches = [feedstocks[i : i + batch_size] for i in range(0, len(feedstocks), batch_size)]
 
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    async with httpx2.AsyncClient(timeout=timeout) as client:
         for batch_index, batch in enumerate(batches, start=1):
             step(f"Fetching activity batch {batch_index}/{len(batches)} ({len(batch)} feedstocks)")
             result = await fetch_activity_batch(

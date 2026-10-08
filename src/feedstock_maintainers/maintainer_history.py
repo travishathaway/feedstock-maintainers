@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
-import httpx
+import httpx2
 
 from .github import Cooldown, FetchError, RatePacer, fetch_gitmodules, fetch_recipe
 from .gitmodules import FeedstockSource, parse_gitmodules
@@ -115,7 +115,7 @@ def _sync_get_with_retries(
     retries: int,
     params: dict | None = None,
     headers: dict | None = None,
-) -> httpx.Response | None:
+) -> httpx2.Response | None:
     """Return the response, None on 404, or raise FetchError after exhausting retries.
 
     A plain synchronous GET with backoff. These calls happen at most a couple of times per month
@@ -126,8 +126,8 @@ def _sync_get_with_retries(
 
     for attempt in range(retries + 1):
         try:
-            response = httpx.get(url, params=params, headers=headers, follow_redirects=True)
-        except httpx.TransportError as exc:
+            response = httpx2.get(url, params=params, headers=headers, follow_redirects=True)
+        except httpx2.TransportError as exc:
             last_exc = exc
         else:
             if response.status_code == 200:
@@ -211,7 +211,7 @@ def diff_submodule_trees(
 async def build_snapshot(
     previous: MaintainerHistoryState,
     target_date: date,
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
     cooldown: Cooldown,
     pacer: RatePacer,
     concurrency: int = 25,
@@ -311,9 +311,9 @@ async def _run_backfill_async(
 
     cooldown = Cooldown()
     pacer = RatePacer(requests_per_second)
-    limits = httpx.Limits(max_connections=concurrency, max_keepalive_connections=concurrency)
+    limits = httpx2.Limits(max_connections=concurrency, max_keepalive_connections=concurrency)
 
-    async with httpx.AsyncClient(timeout=timeout, limits=limits, follow_redirects=True) as client:
+    async with httpx2.AsyncClient(timeout=timeout, limits=limits, follow_redirects=True) as client:
         for target_date in months:
             step(f"Building snapshot for {target_date.isoformat()}")
             new_state = await build_snapshot(
