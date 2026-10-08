@@ -69,8 +69,9 @@
 				</a>
 			</li>
 		</ul>
+		<SearchBar />
 		<a
-			class="btn btn-outline-secondary btn-sm ms-auto flex-shrink-0"
+			class="btn btn-outline-secondary btn-sm ms-lg-0 flex-shrink-0"
 			href="https://github.com/travishathaway/feedstock-maintainers"
 			target="_blank"
 			rel="noreferrer"
@@ -86,8 +87,6 @@
 			<i class="bi bi-box-arrow-up-right"></i><span class="d-none d-sm-inline">  &nbsp;conda-forge.org</span>
 		</a>
 	</nav>
-
-	<SearchBar />
 
 	<div class="container flex-grow-1">
 		<div class="row h-100">
