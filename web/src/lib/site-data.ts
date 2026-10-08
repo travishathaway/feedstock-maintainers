@@ -170,3 +170,25 @@ export function loadMaintainerProfile(login: string): Promise<MaintainerProfile>
 export function loadPackageProfile(name: string): Promise<PackageProfile> {
 	return loadJson(`packages/${encodeURIComponent(name)}.json`);
 }
+
+/** `[login, name ("" if unset), GitHub avatar user id | null]`, most feedstocks first. */
+export type SearchMaintainerRow = [string, string, number | null];
+
+export interface SearchIndex {
+	maintainers: SearchMaintainerRow[];
+	/** Package names, most downloaded last month first. */
+	packages: string[];
+}
+
+let searchIndexPromise: Promise<SearchIndex> | null = null;
+
+/** Loads `search-index.json` once; a failed load is not cached so the next focus can retry. */
+export function loadSearchIndex(): Promise<SearchIndex> {
+	if (!searchIndexPromise) {
+		searchIndexPromise = loadJson<SearchIndex>('search-index.json').catch((err) => {
+			searchIndexPromise = null;
+			throw err;
+		});
+	}
+	return searchIndexPromise;
+}

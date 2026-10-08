@@ -5,7 +5,7 @@
 	import anvilLogo from '$lib/assets/conda-forge-anvil.png';
 	import favicon from '$lib/assets/conda-forge-favicon.ico';
 	import Footer from '$lib/components/Footer.svelte';
-	import Sidebar from '$lib/components/Sidebar.svelte';
+	import SearchBar from '$lib/components/SearchBar.svelte';
 	import '$lib/styles/bootstrap-theme.scss';
 	import 'bootstrap-icons/font/bootstrap-icons.css';
 	import '@fontsource-variable/inter';
@@ -86,6 +86,8 @@
 			<i class="bi bi-box-arrow-up-right"></i><span class="d-none d-sm-inline">  &nbsp;conda-forge.org</span>
 		</a>
 	</nav>
+
+	<SearchBar />
 
 	<div class="container flex-grow-1">
 		<div class="row h-100">

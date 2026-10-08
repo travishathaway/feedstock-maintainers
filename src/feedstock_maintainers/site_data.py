@@ -62,6 +62,7 @@ looks different on two pages):
 
 from __future__ import annotations
 
+import re
 import statistics
 import urllib.parse
 from collections import Counter, defaultdict
@@ -197,6 +198,48 @@ def _display_name(login: str, maintainer_info: dict[str, dict]) -> str | None:
     if info is None:
         return None
     return info.get("name") or login
+
+
+_AVATAR_ID_RE = re.compile(r"/u/(\d+)")
+
+
+def _avatar_id(avatar_url: str | None) -> int | None:
+    """GitHub's numeric user id out of an `avatars.githubusercontent.com/u/<id>` URL, or `None`.
+
+    The search index stores just the id (the client rebuilds the URL) to keep it small.
+    """
+    match = _AVATAR_ID_RE.search(avatar_url or "")
+    return int(match.group(1)) if match else None
+
+
+def build_search_index(
+    maintainer_info: dict[str, dict],
+    feedstock_counts: dict[str, int],
+    package_names: Iterable[str],
+    package_downloads: dict[str, dict[str, int]],
+) -> dict[str, Any]:
+    """Build the site-wide search bar's `search-index.json` payload.
+
+    `maintainers` is `[login, name, avatar_id]` rows (`name` is `""` when the profile has none,
+    `avatar_id` is `None` when unknown) ordered by feedstock count, then login; `packages` is the
+    package names ordered by last month's downloads, then name. The ordering lets the client break
+    score ties by just taking the earlier entry.
+    """
+    maintainers = [
+        [login, info.get("name") or "", _avatar_id(info.get("avatar_url"))]
+        for login, info in sorted(
+            maintainer_info.items(), key=lambda item: (-feedstock_counts.get(item[0], 0), item[0])
+        )
+    ]
+    normalized_downloads = normalize_package_downloads(package_downloads)
+    packages = sorted(
+        package_names,
+        key=lambda name: (
+            -latest_month_downloads(lookup_package_downloads(normalized_downloads, name))[1],
+            name,
+        ),
+    )
+    return {"maintainers": maintainers, "packages": packages}
 
 
 def compute_maintainer_overview(

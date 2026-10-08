@@ -29,6 +29,7 @@ from ..repodata import RepodataFetchError
 from ..site_data import (
     build_maintainer_profiles,
     build_package_profiles,
+    build_search_index,
     compute_maintainer_overview,
     compute_package_overview,
 )
@@ -1011,10 +1012,12 @@ def generate_site_data(
 
     console.print(f"Writing {len(maintainer_info_data)} maintainer profile(s)...")
     maintainer_logins = []
+    feedstock_counts: dict[str, int] = {}
     for login, profile in build_maintainer_profiles(
         maintainers_data, maintainer_info_data, maintainer_graph_data, package_names_data
     ):
         maintainer_logins.append(login)
+        feedstock_counts[login] = profile.get("feedstock_count", 0)
         _write_json_fast(maintainers_dir / f"{login}.json", profile)
     _atomic_write(maintainers_dir / "index.json", sorted(maintainer_logins))
 
@@ -1034,6 +1037,17 @@ def generate_site_data(
         package_names_list.append(name)
         _write_json_fast(packages_dir / f"{name}.json", profile)
     _atomic_write(packages_dir / "index.json", sorted(package_names_list))
+
+    console.print("Building search-index.json...")
+    _write_json_fast(
+        output_dir / "search-index.json",
+        build_search_index(
+            {login: maintainer_info_data[login] for login in maintainer_logins},
+            feedstock_counts,
+            package_names_list,
+            package_downloads_data,
+        ),
+    )
 
     _copy_if_exists(maintainer_history_file, output_dir / "maintainer-history.json", console)
     _copy_if_exists(

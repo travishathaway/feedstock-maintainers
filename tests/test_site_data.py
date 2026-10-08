@@ -12,6 +12,7 @@ from feedstock_maintainers.site_data import (
     build_maintainer_ego_network,
     build_maintainer_profiles,
     build_package_profiles,
+    build_search_index,
     compute_maintainer_overview,
     compute_package_overview,
     compute_risk_score,
@@ -1019,3 +1020,34 @@ def test_package_profile_license_picks_first_feedstock_that_declares_one():
     )["libblas"]
 
     assert profile["license"] == "BSD-3-Clause"
+
+
+# ── build_search_index ──────────────────────────────────────────────────────────────────────
+
+
+def test_build_search_index_shape_and_ordering() -> None:
+    info: dict[str, dict] = {
+        "alice": {"login": "alice", "name": "Alice A", "avatar_url": "https://avatars/u/42?v=4"},
+        "bob": {"login": "bob", "name": None, "avatar_url": None},
+        "carol": {"login": "carol", "name": "Carol C", "avatar_url": "https://avatars/u/7?v=4"},
+    }
+    downloads = {"rare": {"2024-01": 5}, "popular": {"2024-01": 500, "2024-02": 900}}
+    index = build_search_index(
+        info, {"alice": 1, "bob": 3, "carol": 3}, ["rare", "popular", "unknown"], downloads
+    )
+
+    # feedstock count desc, then login; missing name -> "", unparseable avatar -> None
+    assert index["maintainers"] == [
+        ["bob", "", None],
+        ["carol", "Carol C", 7],
+        ["alice", "Alice A", 42],
+    ]
+    # latest-month downloads desc, then name; packages with no download data sort last
+    assert index["packages"] == ["popular", "rare", "unknown"]
+
+
+def test_build_search_index_handles_url_encoded_download_keys() -> None:
+    index = build_search_index(
+        {}, {}, ["_libgcc_mutex", "a"], {"%5flibgcc%5fmutex": {"2024-01": 9}}
+    )
+    assert index["packages"] == ["_libgcc_mutex", "a"]
